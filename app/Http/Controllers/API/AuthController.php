@@ -269,11 +269,11 @@ class AuthController extends BaseController
         } catch (ClientException $e) {
             $body    = (string) optional($e->getResponse())->getBody();
             $payload = json_decode($body, true) ?: ['raw' => Str::limit($body, 5000)];
-            Log::warning('OAuth client error', [
-                'provider' => $provider,
-                'msg'      => $e->getMessage(),
-                'payload'  => $payload,
-            ]);
+//            Log::warning('OAuth client error', [
+//                'provider' => $provider,
+//                'msg'      => $e->getMessage(),
+//                'payload'  => $payload,
+//            ]);
             report($e);
 
             $message = config('app.debug')
@@ -287,10 +287,10 @@ class AuthController extends BaseController
             ], 422);
 
         } catch (ConnectException $e) {
-            Log::error('OAuth connect error', [
-                'provider' => $provider,
-                'msg'      => $e->getMessage(),
-            ]);
+//            Log::error('OAuth connect error', [
+//                'provider' => $provider,
+//                'msg'      => $e->getMessage(),
+//            ]);
             report($e);
 
             return response()->json([
@@ -299,11 +299,11 @@ class AuthController extends BaseController
             ], 502);
 
         } catch (\Throwable $e) {
-            Log::error('OAuth unknown error', [
-                'provider' => $provider,
-                'msg'      => $e->getMessage(),
-                'class'    => get_class($e),
-            ]);
+//            Log::error('OAuth unknown error', [
+//                'provider' => $provider,
+//                'msg'      => $e->getMessage(),
+//                'class'    => get_class($e),
+//            ]);
             report($e);
 
             return $this->sendError('auth.social_failed', ['provider' => $provider], 422);
