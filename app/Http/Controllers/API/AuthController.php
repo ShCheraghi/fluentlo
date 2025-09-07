@@ -237,76 +237,144 @@ class AuthController extends BaseController
     )]
     public function socialCallback(string $provider): JsonResponse
     {
-        if (!in_array($provider, self::SUPPORTED_PROVIDERS, true)) {
-            return $this->sendError('auth.unsupported_provider', ['provider' => $provider], 422);
-        }
-
-        if ($err = request('error')) {
-            return $this->sendError('auth.social_failed', [
-                'provider'          => $provider,
-                'reason'            => $err,
-                'error_description' => request('error_description'),
-            ], 422);
-        }
-
-        if (!request()->has('code')) {
-            return $this->sendValidationError([
-                'code' => ['Missing authorization code from provider.']
-            ]);
-        }
-
+        // Debug step 1: بررسی اولیه
         try {
-            $driver = Socialite::driver($provider)->stateless();
-            if ($provider === 'google') {
-                $driver->scopes(['openid', 'profile', 'email']);
+            if (!in_array($provider, self::SUPPORTED_PROVIDERS, true)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unsupported provider',
+                    'debug' => 'Step 1: Provider validation failed',
+                    'provider' => $provider
+                ], 422);
             }
 
-            $socialUser = $driver->user();
-            $result     = $this->socialAuthService->handleSocialUser($provider, $socialUser);
+            // Debug step 2: بررسی error از provider
+            if ($err = request('error')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Provider returned error',
+                    'debug' => 'Step 2: Provider error',
+                    'error' => $err,
+                    'error_description' => request('error_description'),
+                    'provider' => $provider
+                ], 422);
+            }
 
-            return $this->sendResponse($result, 'auth.social_success');
+            // Debug step 3: بررسی code
+            if (!request()->has('code')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Missing authorization code',
+                    'debug' => 'Step 3: Code validation failed',
+                    'query_params' => request()->all()
+                ], 422);
+            }
 
-        } catch (ClientException $e) {
-            $body    = (string) optional($e->getResponse())->getBody();
-            $payload = json_decode($body, true) ?: ['raw' => Str::limit($body, 5000)];
-//            Log::warning('OAuth client error', [
-//                'provider' => $provider,
-//                'msg'      => $e->getMessage(),
-//                'payload'  => $payload,
-//            ]);
-            report($e);
+            // Debug step 4: تست Socialite driver
+            try {
+                $driver = Socialite::driver($provider)->stateless();
+                if ($provider === 'google') {
+                    $driver->scopes(['openid', 'profile', 'email']);
+                }
+            }
+            catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Socialite driver failed',
+                    'debug' => 'Step 4: Driver creation failed',
+                    'error' => $e->getMessage(),
+                    'provider' => $provider
+                ], 500);
+            }
 
-            $message = config('app.debug')
-                ? ($payload['error_description'] ?? $payload['error'] ?? $e->getMessage())
-                : __('auth.social_failed');
+            // Debug step 5: تست user retrieval
+            try {
+                $socialUser = $driver->user();
+            }
+            catch (ClientException $e) {
+                $body = (string) optional($e->getResponse())->getBody();
+                return response()->json([
+                    'success' => false,
+                    'message' => 'OAuth client error',
+                    'debug' => 'Step 5: User retrieval failed - Client Error',
+                    'provider' => $provider,
+                    'error' => $e->getMessage(),
+                    'response_body' => substr($body, 0, 1000) // محدود کردن طول
+                ], 422);
+            }
+            catch (ConnectException $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'OAuth connection error',
+                    'debug' => 'Step 5: User retrieval failed - Connection Error',
+                    'provider' => $provider,
+                    'error' => $e->getMessage()
+                ], 502);
+            }
+            catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'OAuth unknown error',
+                    'debug' => 'Step 5: User retrieval failed - Unknown Error',
+                    'provider' => $provider,
+                    'error' => $e->getMessage(),
+                    'class' => get_class($e)
+                ], 500);
+            }
 
+            // Debug step 6: بررسی social user data
+            if (!$socialUser || !$socialUser->email) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid social user data',
+                    'debug' => 'Step 6: Social user validation failed',
+                    'social_user' => [
+                        'id' => $socialUser->id ?? null,
+                        'email' => $socialUser->email ?? null,
+                        'name' => $socialUser->name ?? null,
+                        'has_user' => !is_null($socialUser)
+                    ]
+                ], 422);
+            }
+
+            // Debug step 7: تست social auth service
+            try {
+                $result = $this->socialAuthService->handleSocialUser($provider, $socialUser);
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Social authentication successful',
+                    'debug' => 'Step 7: All steps completed successfully',
+                    'data' => $result
+                ]);
+
+            }
+            catch (\Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Social auth service failed',
+                    'debug' => 'Step 7: SocialAuthService failed',
+                    'provider' => $provider,
+                    'error' => $e->getMessage(),
+                    'class' => get_class($e),
+                    'line' => $e->getLine(),
+                    'file' => $e->getFile()
+                ], 500);
+            }
+
+        }
+        catch (\Exception $e) {
+            // کلی fallback برای هر ارور غیرمنتظره
             return response()->json([
                 'success' => false,
-                'message' => $message,
-                'errors'  => ['oauth' => $payload],
-            ], 422);
-
-        } catch (ConnectException $e) {
-//            Log::error('OAuth connect error', [
-//                'provider' => $provider,
-//                'msg'      => $e->getMessage(),
-//            ]);
-            report($e);
-
-            return response()->json([
-                'success' => false,
-                'message' => __('messages.network_error'),
-            ], 502);
-
-        } catch (\Throwable $e) {
-//            Log::error('OAuth unknown error', [
-//                'provider' => $provider,
-//                'msg'      => $e->getMessage(),
-//                'class'    => get_class($e),
-//            ]);
-            report($e);
-
-            return $this->sendError('auth.social_failed', ['provider' => $provider], 422);
+                'message' => 'Unexpected error in social callback',
+                'debug' => 'Unexpected Exception',
+                'error' => $e->getMessage(),
+                'class' => get_class($e),
+                'line' => $e->getLine(),
+                'file' => $e->getFile(),
+                'trace' => array_slice($e->getTrace(), 0, 5) // فقط 5 تا اول
+            ], 500);
         }
     }
 
