@@ -1,0 +1,1286 @@
+{
+    "openapi": "3.0.0",
+    "info": {
+        "title": "fluentlo API",
+        "description": "Laravel 12 + Sanctum + Swagger",
+        "version": "1.0.0"
+    },
+    "servers": [
+        {
+            "url": "/api"
+        }
+    ],
+    "paths": {
+        "/v1/app/ai/speech/transcribe": {
+            "post": {
+                "tags": [
+                    "AI – Speech"
+                ],
+                "summary": "Transcribe via file upload or public URL (RapidAPI)",
+                "description": "Send either an audio file (multipart) OR a public audio_url (JSON). If audio_url is provided, the file upload is ignored.",
+                "operationId": "aiSpeechTranscribe",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": {
+                                "required": [
+                                    "audio_file"
+                                ],
+                                "properties": {
+                                    "audio_file": {
+                                        "description": "Allowed: wav, mp3, m4a, ogg, webm, flac (<= 25MB)",
+                                        "type": "string",
+                                        "format": "binary"
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Transcription success",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "properties": {
+                                        "success": {
+                                            "type": "boolean",
+                                            "example": true
+                                        },
+                                        "message": {
+                                            "type": "string",
+                                            "example": "Hello world"
+                                        },
+                                        "data": {
+                                            "properties": {
+                                                "text": {
+                                                    "type": "string",
+                                                    "example": "Hello world"
+                                                },
+                                                "language": {
+                                                    "type": "string",
+                                                    "example": "en"
+                                                },
+                                                "confidence": {
+                                                    "type": "number",
+                                                    "format": "float",
+                                                    "example": 0.93
+                                                },
+                                                "duration": {
+                                                    "type": "number",
+                                                    "format": "float",
+                                                    "example": 12.8,
+                                                    "nullable": true
+                                                },
+                                                "word_count": {
+                                                    "type": "integer",
+                                                    "example": 2
+                                                },
+                                                "provider": {
+                                                    "type": "string",
+                                                    "example": "rapidapi"
+                                                },
+                                                "processed_at": {
+                                                    "type": "string",
+                                                    "example": "2025-09-05T10:00:00Z"
+                                                }
+                                            },
+                                            "type": "object"
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error"
+                    },
+                    "500": {
+                        "description": "Server/STT error"
+                    }
+                },
+                "security": [
+                    {
+                        "sanctum": []
+                    }
+                ]
+            }
+        },
+        "/v1/app/ai/speech/transcribe/url": {
+            "post": {
+                "tags": [
+                    "AI – Speech"
+                ],
+                "summary": "Transcribe from a PUBLIC audio URL (RapidAPI)",
+                "description": "Send a public audio_url via JSON. Do NOT send localhost/127.0.0.1.",
+                "operationId": "aiSpeechTranscribeFromUrl",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "required": [
+                                    "audio_url"
+                                ],
+                                "properties": {
+                                    "audio_url": {
+                                        "description": "Publicly reachable audio URL (mp3, wav, m4a, ogg, webm, flac)",
+                                        "type": "string",
+                                        "example": "https://cdn.openai.com/whisper/draft-20220913a/micro-machines.wav"
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Transcription success"
+                    },
+                    "422": {
+                        "description": "Validation error"
+                    },
+                    "500": {
+                        "description": "Server/STT error"
+                    }
+                },
+                "security": [
+                    {
+                        "sanctum": []
+                    }
+                ]
+            }
+        },
+        "/v1/app/version/check": {
+            "post": {
+                "tags": [
+                    "App Version"
+                ],
+                "summary": "Check for app updates (Public)",
+                "operationId": "app_check_version",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "required": [
+                                    "platform",
+                                    "version",
+                                    "build_number"
+                                ],
+                                "properties": {
+                                    "platform": {
+                                        "type": "string",
+                                        "enum": [
+                                            "ios",
+                                            "android"
+                                        ],
+                                        "example": "ios"
+                                    },
+                                    "version": {
+                                        "type": "string",
+                                        "example": "1.0.0"
+                                    },
+                                    "build_number": {
+                                        "type": "integer",
+                                        "example": 1
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Version check result"
+                    },
+                    "422": {
+                        "description": "Validation error"
+                    }
+                }
+            }
+        },
+        "/v1/app/version/latest": {
+            "get": {
+                "tags": [
+                    "App Version"
+                ],
+                "summary": "Get latest version info (Public)",
+                "operationId": "app_latest_version",
+                "parameters": [
+                    {
+                        "name": "platform",
+                        "in": "query",
+                        "description": "Platform (ios/android)",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "enum": [
+                                "ios",
+                                "android"
+                            ]
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Latest version info"
+                    },
+                    "422": {
+                        "description": "Validation error"
+                    }
+                }
+            }
+        },
+        "/v1/admin/app-versions": {
+            "get": {
+                "tags": [
+                    "App Version"
+                ],
+                "summary": "List app versions (Admin)",
+                "operationId": "admin_app_versions_index",
+                "parameters": [
+                    {
+                        "name": "platform",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "enum": [
+                                "ios",
+                                "android"
+                            ]
+                        }
+                    },
+                    {
+                        "name": "per_page",
+                        "in": "query",
+                        "schema": {
+                            "type": "integer",
+                            "default": 15
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "App versions list"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    }
+                },
+                "security": [
+                    {
+                        "sanctum": []
+                    }
+                ]
+            },
+            "post": {
+                "tags": [
+                    "App Version"
+                ],
+                "summary": "Create app version (Admin)",
+                "operationId": "admin_app_versions_store",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "required": [
+                                    "platform",
+                                    "version",
+                                    "build_number"
+                                ],
+                                "properties": {
+                                    "platform": {
+                                        "type": "string",
+                                        "enum": [
+                                            "ios",
+                                            "android"
+                                        ]
+                                    },
+                                    "version": {
+                                        "type": "string",
+                                        "example": "1.0.1"
+                                    },
+                                    "build_number": {
+                                        "type": "integer",
+                                        "example": 2
+                                    },
+                                    "force_update": {
+                                        "type": "boolean",
+                                        "example": false
+                                    },
+                                    "title": {
+                                        "type": "string",
+                                        "example": "Update Available",
+                                        "nullable": true
+                                    },
+                                    "description": {
+                                        "type": "string",
+                                        "example": "<p>New features</p>",
+                                        "nullable": true
+                                    },
+                                    "store_links": {
+                                        "properties": {
+                                            "app_store": {
+                                                "type": "string",
+                                                "nullable": true
+                                            },
+                                            "google_play": {
+                                                "type": "string",
+                                                "nullable": true
+                                            },
+                                            "direct": {
+                                                "type": "string",
+                                                "nullable": true
+                                            }
+                                        },
+                                        "type": "object",
+                                        "nullable": true
+                                    },
+                                    "is_active": {
+                                        "type": "boolean",
+                                        "example": true
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "App version created"
+                    },
+                    "422": {
+                        "description": "Validation error"
+                    }
+                },
+                "security": [
+                    {
+                        "sanctum": []
+                    }
+                ]
+            }
+        },
+        "/v1/admin/app-versions/{appVersion}": {
+            "get": {
+                "tags": [
+                    "App Version"
+                ],
+                "summary": "Get app version details (Admin)",
+                "operationId": "admin_app_versions_show",
+                "parameters": [
+                    {
+                        "name": "appVersion",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "App version details"
+                    },
+                    "404": {
+                        "description": "Not found"
+                    }
+                },
+                "security": [
+                    {
+                        "sanctum": []
+                    }
+                ]
+            },
+            "put": {
+                "tags": [
+                    "App Version"
+                ],
+                "summary": "Update app version (Admin)",
+                "operationId": "admin_app_versions_update",
+                "parameters": [
+                    {
+                        "name": "appVersion",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "properties": {
+                                    "platform": {
+                                        "type": "string",
+                                        "enum": [
+                                            "ios",
+                                            "android"
+                                        ]
+                                    },
+                                    "version": {
+                                        "type": "string",
+                                        "example": "1.0.1"
+                                    },
+                                    "build_number": {
+                                        "type": "integer",
+                                        "example": 2
+                                    },
+                                    "force_update": {
+                                        "type": "boolean",
+                                        "example": false
+                                    },
+                                    "title": {
+                                        "type": "string",
+                                        "nullable": true
+                                    },
+                                    "description": {
+                                        "type": "string",
+                                        "nullable": true
+                                    },
+                                    "store_links": {
+                                        "properties": {
+                                            "app_store": {
+                                                "type": "string",
+                                                "nullable": true
+                                            },
+                                            "google_play": {
+                                                "type": "string",
+                                                "nullable": true
+                                            },
+                                            "direct": {
+                                                "type": "string",
+                                                "nullable": true
+                                            }
+                                        },
+                                        "type": "object",
+                                        "nullable": true
+                                    },
+                                    "is_active": {
+                                        "type": "boolean",
+                                        "example": true
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "App version updated"
+                    },
+                    "422": {
+                        "description": "Validation error"
+                    }
+                },
+                "security": [
+                    {
+                        "sanctum": []
+                    }
+                ]
+            },
+            "delete": {
+                "tags": [
+                    "App Version"
+                ],
+                "summary": "Delete app version (Admin)",
+                "operationId": "admin_app_versions_destroy",
+                "parameters": [
+                    {
+                        "name": "appVersion",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "App version deleted"
+                    }
+                },
+                "security": [
+                    {
+                        "sanctum": []
+                    }
+                ]
+            }
+        },
+        "/v1/admin/app-versions/{appVersion}/toggle-status": {
+            "post": {
+                "tags": [
+                    "App Version"
+                ],
+                "summary": "Toggle app version status (Admin)",
+                "operationId": "admin_app_versions_toggle_status",
+                "parameters": [
+                    {
+                        "name": "appVersion",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Status toggled"
+                    }
+                },
+                "security": [
+                    {
+                        "sanctum": []
+                    }
+                ]
+            }
+        },
+        "/v1/app/auth/register": {
+            "post": {
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Register a new user",
+                "operationId": "appAuthRegister",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "required": [
+                                    "name",
+                                    "email",
+                                    "password",
+                                    "password_confirmation"
+                                ],
+                                "properties": {
+                                    "name": {
+                                        "type": "string",
+                                        "example": "shahab"
+                                    },
+                                    "email": {
+                                        "type": "string",
+                                        "format": "email",
+                                        "example": "user@example.com"
+                                    },
+                                    "password": {
+                                        "type": "string",
+                                        "format": "password",
+                                        "example": "Passw0rd!"
+                                    },
+                                    "password_confirmation": {
+                                        "type": "string",
+                                        "format": "password",
+                                        "example": "Passw0rd!"
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "User registered successfully"
+                    },
+                    "422": {
+                        "description": "Validation error"
+                    }
+                }
+            }
+        },
+        "/v1/app/auth/login": {
+            "post": {
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Login user",
+                "operationId": "appAuthLogin",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "required": [
+                                    "email",
+                                    "password"
+                                ],
+                                "properties": {
+                                    "email": {
+                                        "type": "string",
+                                        "format": "email",
+                                        "example": "user@example.com"
+                                    },
+                                    "password": {
+                                        "type": "string",
+                                        "format": "password",
+                                        "example": "Passw0rd!"
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "User logged in successfully"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    }
+                }
+            }
+        },
+        "/v1/app/auth/{provider}/redirect": {
+            "get": {
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Redirect to social provider",
+                "operationId": "appAuthSocialRedirect",
+                "parameters": [
+                    {
+                        "name": "provider",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "enum": [
+                                "google",
+                                "facebook"
+                            ]
+                        },
+                        "example": "google"
+                    },
+                    {
+                        "name": "test",
+                        "in": "query",
+                        "description": "Return JSON instead of 302 (diagnostic)",
+                        "required": false,
+                        "schema": {
+                            "type": "boolean"
+                        },
+                        "example": true
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Redirect to provider"
+                    },
+                    "422": {
+                        "description": "Unsupported provider"
+                    }
+                }
+            }
+        },
+        "/v1/app/auth/{provider}/callback": {
+            "get": {
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Handle social provider callback",
+                "operationId": "appAuthSocialCallback",
+                "parameters": [
+                    {
+                        "name": "provider",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "enum": [
+                                "google",
+                                "facebook"
+                            ]
+                        },
+                        "example": "google"
+                    },
+                    {
+                        "name": "code",
+                        "in": "query",
+                        "description": "Authorization code from provider",
+                        "required": false,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "state",
+                        "in": "query",
+                        "description": "Opaque state (ignored in stateless)",
+                        "required": false,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "error",
+                        "in": "query",
+                        "description": "Provider error (if user denied)",
+                        "required": false,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Social authentication successful"
+                    },
+                    "422": {
+                        "description": "Social authentication failed"
+                    }
+                }
+            }
+        },
+        "/v1/app/auth/validate-token": {
+            "post": {
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Validate Sanctum token",
+                "operationId": "appAuthValidateToken",
+                "responses": {
+                    "200": {
+                        "description": "Token is valid"
+                    },
+                    "401": {
+                        "description": "Token is invalid"
+                    }
+                },
+                "security": [
+                    {
+                        "sanctum": []
+                    }
+                ]
+            }
+        },
+        "/v1/app/auth/logout": {
+            "post": {
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Logout user and revoke token",
+                "operationId": "appAuthLogout",
+                "responses": {
+                    "200": {
+                        "description": "Logout successful"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    }
+                },
+                "security": [
+                    {
+                        "sanctum": []
+                    }
+                ]
+            }
+        },
+        "/v1/app/auth/logout-all": {
+            "post": {
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Logout from all devices",
+                "operationId": "appAuthLogoutAll",
+                "responses": {
+                    "200": {
+                        "description": "Logout from all devices successful"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    }
+                },
+                "security": [
+                    {
+                        "sanctum": []
+                    }
+                ]
+            }
+        },
+        "/v1/app/auth/forgot-password": {
+            "post": {
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Forgot password (send reset link)",
+                "operationId": "app_forgot_password",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "required": [
+                                    "email"
+                                ],
+                                "properties": {
+                                    "email": {
+                                        "type": "string",
+                                        "format": "email",
+                                        "example": "shahabcheraghi@live.com"
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Reset link sent (generic OK)"
+                    },
+                    "422": {
+                        "description": "Validation error"
+                    }
+                }
+            }
+        },
+        "/v1/app/auth/reset-password": {
+            "post": {
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Reset password (with token)",
+                "operationId": "app_reset_password",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "required": [
+                                    "email",
+                                    "token",
+                                    "password",
+                                    "password_confirmation"
+                                ],
+                                "properties": {
+                                    "email": {
+                                        "type": "string",
+                                        "format": "email",
+                                        "example": "user@example.com"
+                                    },
+                                    "token": {
+                                        "type": "string",
+                                        "example": "reset_token_here"
+                                    },
+                                    "password": {
+                                        "type": "string",
+                                        "format": "password",
+                                        "example": "NewPassword123!"
+                                    },
+                                    "password_confirmation": {
+                                        "type": "string",
+                                        "format": "password",
+                                        "example": "NewPassword123!"
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Password reset successful"
+                    },
+                    "422": {
+                        "description": "Invalid token or validation error"
+                    }
+                }
+            }
+        },
+        "/v1/app/auth/change-password": {
+            "post": {
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Change password (authenticated user)",
+                "operationId": "app_change_password",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "required": [
+                                    "current_password",
+                                    "password",
+                                    "password_confirmation"
+                                ],
+                                "properties": {
+                                    "current_password": {
+                                        "type": "string",
+                                        "format": "password",
+                                        "example": "CurrentPassword123"
+                                    },
+                                    "password": {
+                                        "type": "string",
+                                        "format": "password",
+                                        "example": "NewPassword123!"
+                                    },
+                                    "password_confirmation": {
+                                        "type": "string",
+                                        "format": "password",
+                                        "example": "NewPassword123!"
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Password changed"
+                    },
+                    "401": {
+                        "description": "Unauthorized / current password incorrect"
+                    },
+                    "422": {
+                        "description": "Validation error"
+                    }
+                },
+                "security": [
+                    {
+                        "sanctum": []
+                    }
+                ]
+            }
+        },
+        "/v1/app/onboarding/screens": {
+            "get": {
+                "tags": [
+                    "Onboarding"
+                ],
+                "summary": "Get all active onboarding screens (App)",
+                "operationId": "getOnboardingScreens",
+                "responses": {
+                    "200": {
+                        "description": "List of onboarding screens"
+                    }
+                }
+            }
+        },
+        "/v1/admin/onboarding-screens": {
+            "get": {
+                "tags": [
+                    "Onboarding"
+                ],
+                "summary": "Get all onboarding screens (Admin)",
+                "operationId": "adminGetOnboardingScreens",
+                "parameters": [
+                    {
+                        "name": "page",
+                        "in": "query",
+                        "schema": {
+                            "type": "integer",
+                            "minimum": 1
+                        }
+                    },
+                    {
+                        "name": "per_page",
+                        "in": "query",
+                        "schema": {
+                            "type": "integer",
+                            "maximum": 100,
+                            "minimum": 1
+                        }
+                    },
+                    {
+                        "name": "is_active",
+                        "in": "query",
+                        "schema": {
+                            "type": "boolean"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "List of onboarding screens (admin)"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    }
+                },
+                "security": [
+                    {
+                        "sanctum": []
+                    }
+                ]
+            },
+            "post": {
+                "tags": [
+                    "Onboarding"
+                ],
+                "summary": "Create new onboarding screen (Admin)",
+                "operationId": "adminStoreOnboardingScreen",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": {
+                                "required": [
+                                    "title",
+                                    "image",
+                                    "background_color",
+                                    "text_color",
+                                    "button_color",
+                                    "order_index"
+                                ],
+                                "properties": {
+                                    "title": {
+                                        "type": "string",
+                                        "maxLength": 255
+                                    },
+                                    "subtitle": {
+                                        "type": "string",
+                                        "nullable": true
+                                    },
+                                    "description": {
+                                        "type": "string",
+                                        "nullable": true
+                                    },
+                                    "image": {
+                                        "type": "string",
+                                        "format": "binary"
+                                    },
+                                    "background_color": {
+                                        "type": "string",
+                                        "pattern": "^#[0-9A-Fa-f]{6}$"
+                                    },
+                                    "text_color": {
+                                        "type": "string",
+                                        "pattern": "^#[0-9A-Fa-f]{6}$"
+                                    },
+                                    "button_color": {
+                                        "type": "string",
+                                        "pattern": "^#[0-9A-Fa-f]{6}$"
+                                    },
+                                    "order_index": {
+                                        "type": "integer",
+                                        "minimum": 0
+                                    },
+                                    "is_active": {
+                                        "type": "boolean"
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "Onboarding screen created successfully"
+                    },
+                    "422": {
+                        "description": "Validation error"
+                    }
+                },
+                "security": [
+                    {
+                        "sanctum": []
+                    }
+                ]
+            }
+        },
+        "/v1/admin/onboarding-screens/{id}": {
+            "get": {
+                "tags": [
+                    "Onboarding"
+                ],
+                "summary": "Get specific onboarding screen (Admin)",
+                "operationId": "adminShowOnboardingScreen",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Onboarding screen details"
+                    },
+                    "404": {
+                        "description": "Not found"
+                    }
+                },
+                "security": [
+                    {
+                        "sanctum": []
+                    }
+                ]
+            },
+            "put": {
+                "tags": [
+                    "Onboarding"
+                ],
+                "summary": "Update onboarding screen (Admin)",
+                "operationId": "adminUpdateOnboardingScreen",
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": {
+                                "required": [],
+                                "properties": {
+                                    "title": {
+                                        "type": "string",
+                                        "maxLength": 255
+                                    },
+                                    "subtitle": {
+                                        "type": "string",
+                                        "nullable": true
+                                    },
+                                    "description": {
+                                        "type": "string",
+                                        "nullable": true
+                                    },
+                                    "image": {
+                                        "type": "string",
+                                        "format": "binary"
+                                    },
+                                    "background_color": {
+                                        "type": "string",
+                                        "pattern": "^#[0-9A-Fa-f]{6}$"
+                                    },
+                                    "text_color": {
+                                        "type": "string",
+                                        "pattern": "^#[0-9A-Fa-f]{6}$"
+                                    },
+                                    "button_color": {
+                                        "type": "string",
+                                        "pattern": "^#[0-9A-Fa-f]{6}$"
+                                    },
+                                    "order_index": {
+                                        "type": "integer",
+                                        "minimum": 0
+                                    },
+                                    "is_active": {
+                                        "type": "boolean"
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Updated successfully"
+                    },
+                    "422": {
+                        "description": "Validation error"
+                    }
+                },
+                "security": [
+                    {
+                        "sanctum": []
+                    }
+                ]
+            },
+            "delete": {
+                "tags": [
+                    "Onboarding"
+                ],
+                "summary": "Delete onboarding screen (Admin)",
+                "operationId": "adminDeleteOnboardingScreen",
+                "responses": {
+                    "200": {
+                        "description": "Deleted successfully"
+                    },
+                    "404": {
+                        "description": "Not found"
+                    }
+                },
+                "security": [
+                    {
+                        "sanctum": []
+                    }
+                ]
+            }
+        },
+        "/v1/admin/onboarding-screens/{id}/toggle-status": {
+            "post": {
+                "tags": [
+                    "Onboarding"
+                ],
+                "summary": "Toggle onboarding screen active status (Admin)",
+                "operationId": "adminToggleOnboardingScreenStatus",
+                "responses": {
+                    "200": {
+                        "description": "Status toggled successfully"
+                    }
+                },
+                "security": [
+                    {
+                        "sanctum": []
+                    }
+                ]
+            }
+        },
+        "/v1/admin/onboarding-screens/reorder": {
+            "post": {
+                "tags": [
+                    "Onboarding"
+                ],
+                "summary": "Reorder onboarding screens (Admin)",
+                "operationId": "adminReorderOnboardingScreens",
+                "responses": {
+                    "200": {
+                        "description": "Screens reordered successfully"
+                    }
+                },
+                "security": [
+                    {
+                        "sanctum": []
+                    }
+                ]
+            }
+        }
+    },
+    "components": {
+        "securitySchemes": {
+            "sanctum": {
+                "type": "http",
+                "bearerFormat": "JWT",
+                "scheme": "bearer"
+            }
+        }
+    },
+    "tags": [
+        {
+            "name": "AI – Speech",
+            "description": "Speech-to-Text (file OR URL)"
+        },
+        {
+            "name": "App Version",
+            "description": "App version management (public + admin)"
+        },
+        {
+            "name": "auth",
+            "description": "Authentication endpoints (login/register/password)"
+        },
+        {
+            "name": "Onboarding",
+            "description": "Onboarding screens for app (public) and admin management"
+        }
+    ]
+}
