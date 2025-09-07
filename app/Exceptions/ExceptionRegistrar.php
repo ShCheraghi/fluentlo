@@ -6,7 +6,6 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Configuration\Exceptions;
-use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Exceptions\ThrottleRequestsException;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\{HttpExceptionInterface,
@@ -18,23 +17,23 @@ final class ExceptionRegistrar
 {
     public static function register(Exceptions $exceptions): void
     {
+        // هر درخواست API یا درخواست JSON → خروجی JSON
         $exceptions->shouldRenderJsonWhen(function ($request, Throwable $e) {
+            // اگر همهٔ APIها زیر v1/... هستن، این کافیه
+            // اگر ساختارت فرق داره، اینجا رو با الگوی خودت عوض کن.
             return $request->is('v1/*') || $request->expectsJson();
         });
 
-        // NEW: اجازه بده پاسخ‌های آماده دست‌نخورده برگردن (Redirect/…)
-        $exceptions->render(function (HttpResponseException $e, $request) {
-            return $e->getResponse();
-        });
-
+        // 422: Validation
         $exceptions->render(function (ValidationException $e, $request) {
             return response()->json([
                 'success' => false,
                 'message' => __('messages.validation_error'),
-                'errors'  => $e->errors(),
+                'errors' => $e->errors(),
             ], 422);
         });
 
+        // 401: Unauthenticated
         $exceptions->render(function (AuthenticationException $e, $request) {
             return response()->json([
                 'success' => false,
@@ -42,6 +41,7 @@ final class ExceptionRegistrar
             ], 401);
         });
 
+        // 403: Forbidden
         $exceptions->render(function (AuthorizationException $e, $request) {
             return response()->json([
                 'success' => false,
@@ -49,6 +49,7 @@ final class ExceptionRegistrar
             ], 403);
         });
 
+        // 404: Not Found (مدل/مسیر)
         $exceptions->render(function (ModelNotFoundException|NotFoundHttpException $e, $request) {
             return response()->json([
                 'success' => false,
@@ -56,6 +57,7 @@ final class ExceptionRegistrar
             ], 404);
         });
 
+        // 405: Method Not Allowed
         $exceptions->render(function (MethodNotAllowedHttpException $e, $request) {
             return response()->json([
                 'success' => false,
@@ -63,6 +65,7 @@ final class ExceptionRegistrar
             ], 405);
         });
 
+        // 429: Too Many Requests (به همراه هدرهای Retry-After)
         $exceptions->render(function (ThrottleRequestsException $e, $request) {
             return response()->json([
                 'success' => false,
@@ -70,6 +73,7 @@ final class ExceptionRegistrar
             ], 429, $e->getHeaders());
         });
 
+        // سایر HttpExceptionها با status مشخص
         $exceptions->render(function (HttpExceptionInterface $e, $request) {
             $status = $e->getStatusCode();
             $message = $e->getMessage() ?: match ($status) {
@@ -90,6 +94,7 @@ final class ExceptionRegistrar
             ], $status, $e->getHeaders());
         });
 
+        // 500: هر چیز دیگر
         $exceptions->render(function (Throwable $e, $request) {
             $payload = [
                 'success' => false,
@@ -98,7 +103,7 @@ final class ExceptionRegistrar
 
             if (config('app.debug')) {
                 $payload['exception'] = class_basename($e);
-                $payload['detail']    = $e->getMessage();
+                $payload['detail'] = $e->getMessage();
             }
 
             return response()->json($payload, 500);
