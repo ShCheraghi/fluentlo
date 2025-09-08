@@ -237,8 +237,14 @@ class AuthController extends BaseController
     )]
     public function socialCallback(string $provider): JsonResponse
     {
-        // Debug step 1: بررسی اولیه
         try {
+            // لاگ اطلاعات اولیه برای دیباگ
+            Log::info('Social callback started', [
+                'provider' => $provider,
+                'query_params' => request()->all(),
+                'url' => request()->fullUrl()
+            ]);
+
             if (!in_array($provider, self::SUPPORTED_PROVIDERS, true)) {
                 return response()->json([
                     'success' => false,
@@ -248,7 +254,6 @@ class AuthController extends BaseController
                 ], 422);
             }
 
-            // Debug step 2: بررسی error از provider
             if ($err = request('error')) {
                 return response()->json([
                     'success' => false,
@@ -260,7 +265,6 @@ class AuthController extends BaseController
                 ], 422);
             }
 
-            // Debug step 3: بررسی code
             if (!request()->has('code')) {
                 return response()->json([
                     'success' => false,
@@ -270,14 +274,26 @@ class AuthController extends BaseController
                 ], 422);
             }
 
-            // Debug step 4: تست Socialite driver
+            // لاگ تنظیمات گوگل
+            if ($provider === 'google') {
+                Log::info('Google OAuth settings', [
+                    'client_id' => env('GOOGLE_CLIENT_ID'),
+                    'client_secret' => env('GOOGLE_CLIENT_SECRET') ? '[SET]' : '[NOT SET]',
+                    'redirect_url' => config('services.google.redirect'),
+                ]);
+            }
+
             try {
                 $driver = Socialite::driver($provider)->stateless();
                 if ($provider === 'google') {
                     $driver->scopes(['openid', 'profile', 'email']);
                 }
-            }
-            catch (\Exception $e) {
+            } catch (\Exception $e) {
+                Log::error('Socialite driver failed', [
+                    'provider' => $provider,
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
                 return response()->json([
                     'success' => false,
                     'message' => 'Socialite driver failed',
@@ -287,22 +303,44 @@ class AuthController extends BaseController
                 ], 500);
             }
 
-            // Debug step 5: تست user retrieval
             try {
+                // لاگ قبل از دریافت اطلاعات کاربر
+                Log::info('Attempting to get user from provider', ['provider' => $provider]);
+
                 $socialUser = $driver->user();
-            }
-            catch (ClientException $e) {
-                $body = (string) optional($e->getResponse())->getBody();
+
+                // لاگ موفقیت‌آمیز بودن دریافت اطلاعات کاربر
+                Log::info('Successfully received user from provider', [
+                    'provider' => $provider,
+                    'user_id' => $socialUser->id,
+                    'user_email' => $socialUser->email,
+                ]);
+            } catch (ClientException $e) {
+                $response = $e->getResponse();
+                $body = (string) $response->getBody();
+
+                Log::error('OAuth client error', [
+                    'provider' => $provider,
+                    'status_code' => $response->getStatusCode(),
+                    'response_body' => $body,
+                    'trace' => $e->getTraceAsString()
+                ]);
+
                 return response()->json([
                     'success' => false,
                     'message' => 'OAuth client error',
                     'debug' => 'Step 5: User retrieval failed - Client Error',
                     'provider' => $provider,
                     'error' => $e->getMessage(),
-                    'response_body' => substr($body, 0, 1000) // محدود کردن طول
+                    'response_body' => $body
                 ], 422);
-            }
-            catch (ConnectException $e) {
+            } catch (ConnectException $e) {
+                Log::error('OAuth connection error', [
+                    'provider' => $provider,
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+
                 return response()->json([
                     'success' => false,
                     'message' => 'OAuth connection error',
@@ -310,8 +348,14 @@ class AuthController extends BaseController
                     'provider' => $provider,
                     'error' => $e->getMessage()
                 ], 502);
-            }
-            catch (\Exception $e) {
+            } catch (\Exception $e) {
+                Log::error('OAuth unknown error', [
+                    'provider' => $provider,
+                    'error' => $e->getMessage(),
+                    'class' => get_class($e),
+                    'trace' => $e->getTraceAsString()
+                ]);
+
                 return response()->json([
                     'success' => false,
                     'message' => 'OAuth unknown error',
@@ -322,8 +366,17 @@ class AuthController extends BaseController
                 ], 500);
             }
 
-            // Debug step 6: بررسی social user data
             if (!$socialUser || !$socialUser->email) {
+                Log::error('Invalid social user data', [
+                    'provider' => $provider,
+                    'social_user' => [
+                        'id' => $socialUser->id ?? null,
+                        'email' => $socialUser->email ?? null,
+                        'name' => $socialUser->name ?? null,
+                        'has_user' => !is_null($socialUser)
+                    ]
+                ]);
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Invalid social user data',
@@ -337,9 +390,13 @@ class AuthController extends BaseController
                 ], 422);
             }
 
-            // Debug step 7: تست social auth service
             try {
                 $result = $this->socialAuthService->handleSocialUser($provider, $socialUser);
+
+                Log::info('Social authentication successful', [
+                    'provider' => $provider,
+                    'user_id' => $result['user']['id'] ?? null,
+                ]);
 
                 return response()->json([
                     'success' => true,
@@ -347,9 +404,16 @@ class AuthController extends BaseController
                     'debug' => 'Step 7: All steps completed successfully',
                     'data' => $result
                 ]);
+            } catch (\Exception $e) {
+                Log::error('Social auth service failed', [
+                    'provider' => $provider,
+                    'error' => $e->getMessage(),
+                    'class' => get_class($e),
+                    'line' => $e->getLine(),
+                    'file' => $e->getFile(),
+                    'trace' => $e->getTraceAsString()
+                ]);
 
-            }
-            catch (\Exception $e) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Social auth service failed',
@@ -361,10 +425,15 @@ class AuthController extends BaseController
                     'file' => $e->getFile()
                 ], 500);
             }
+        } catch (\Exception $e) {
+            Log::error('Unexpected error in social callback', [
+                'error' => $e->getMessage(),
+                'class' => get_class($e),
+                'line' => $e->getLine(),
+                'file' => $e->getFile(),
+                'trace' => $e->getTraceAsString()
+            ]);
 
-        }
-        catch (\Exception $e) {
-            // کلی fallback برای هر ارور غیرمنتظره
             return response()->json([
                 'success' => false,
                 'message' => 'Unexpected error in social callback',
@@ -373,7 +442,7 @@ class AuthController extends BaseController
                 'class' => get_class($e),
                 'line' => $e->getLine(),
                 'file' => $e->getFile(),
-                'trace' => array_slice($e->getTrace(), 0, 5) // فقط 5 تا اول
+                'trace' => array_slice($e->getTrace(), 0, 5)
             ], 500);
         }
     }

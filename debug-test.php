@@ -1,67 +1,45 @@
 <?php
-// فایل: debug-test.php در root پروژه
+// debug-socialite.php
 
-echo "=== Laravel Social Auth Debug ===\n\n";
+require_once 'vendor/autoload.php';
+$app = require_once 'bootstrap/app.php';
 
-// تست 1: کلاس‌های اصلی
-echo "1. Testing core classes:\n";
-try {
-    require_once 'vendor/autoload.php';
-    echo "✅ Autoload OK\n";
-} catch (Exception $e) {
-    echo "❌ Autoload failed: " . $e->getMessage() . "\n";
-    exit;
+echo "=== Socialite Debug ===\n\n";
+
+// چک کردن نصب Socialite
+echo "1. Checking Socialite installation:\n";
+if (class_exists('Laravel\Socialite\SocialiteServiceProvider')) {
+    echo "✅ SocialiteServiceProvider class exists\n";
+} else {
+    echo "❌ SocialiteServiceProvider class not found\n";
 }
 
-// تست 2: Laravel bootstrap
-echo "\n2. Testing Laravel bootstrap:\n";
-try {
-    $app = require_once 'bootstrap/app.php';
-    echo "✅ Laravel bootstrap OK\n";
-} catch (Exception $e) {
-    echo "❌ Laravel bootstrap failed: " . $e->getMessage() . "\n";
+// چک کردن providers
+echo "\n2. Checking registered providers:\n";
+$providers = $app->getLoadedProviders();
+if (isset($providers['Laravel\Socialite\SocialiteServiceProvider'])) {
+    echo "✅ SocialiteServiceProvider is registered\n";
+} else {
+    echo "❌ SocialiteServiceProvider is NOT registered\n";
+    echo "Registered providers: " . implode(', ', array_keys($providers)) . "\n";
 }
 
-// تست 3: Socialite
-echo "\n3. Testing Socialite:\n";
+// تست binding
+echo "\n3. Testing binding:\n";
 try {
-    $socialite = app('Laravel\Socialite\Contracts\Factory');
-    echo "✅ Socialite factory OK\n";
+    $factory = $app->make('Laravel\Socialite\Contracts\Factory');
+    echo "✅ Factory binding works\n";
 } catch (Exception $e) {
-    echo "❌ Socialite factory failed: " . $e->getMessage() . "\n";
+    echo "❌ Factory binding failed: " . $e->getMessage() . "\n";
 }
 
-// تست 4: Google driver
-echo "\n4. Testing Google driver:\n";
+// تست facade
+echo "\n4. Testing facade:\n";
 try {
-    $driver = $socialite->driver('google');
-    echo "✅ Google driver OK\n";
+    $driver = \Laravel\Socialite\Facades\Socialite::driver('google');
+    echo "✅ Facade works\n";
 } catch (Exception $e) {
-    echo "❌ Google driver failed: " . $e->getMessage() . "\n";
-}
-
-// تست 5: Config values
-echo "\n5. Testing config values:\n";
-echo "GOOGLE_CLIENT_ID: " . (config('services.google.client_id') ? 'SET' : 'NOT SET') . "\n";
-echo "GOOGLE_CLIENT_SECRET: " . (config('services.google.client_secret') ? 'SET' : 'NOT SET') . "\n";
-echo "GOOGLE_REDIRECT: " . (config('services.google.redirect') ? config('services.google.redirect') : 'NOT SET') . "\n";
-
-// تست 6: Database connection
-echo "\n6. Testing database:\n";
-try {
-    DB::connection()->getPdo();
-    echo "✅ Database connection OK\n";
-} catch (Exception $e) {
-    echo "❌ Database connection failed: " . $e->getMessage() . "\n";
-}
-
-// تست 7: User model
-echo "\n7. Testing User model:\n";
-try {
-    $userCount = App\Models\User::count();
-    echo "✅ User model OK (count: $userCount)\n";
-} catch (Exception $e) {
-    echo "❌ User model failed: " . $e->getMessage() . "\n";
+    echo "❌ Facade failed: " . $e->getMessage() . "\n";
 }
 
 echo "\n=== Debug Complete ===\n";
