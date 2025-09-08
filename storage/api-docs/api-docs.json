@@ -622,12 +622,12 @@
                                     "email": {
                                         "type": "string",
                                         "format": "email",
-                                        "example": "user@example.com"
+                                        "example": "shahabcheraghi@live.com"
                                     },
                                     "password": {
                                         "type": "string",
                                         "format": "password",
-                                        "example": "Passw0rd!"
+                                        "example": "iShahab1234"
                                     }
                                 },
                                 "type": "object"

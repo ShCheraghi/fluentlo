@@ -108,8 +108,8 @@ class AuthController extends BaseController
             content: new OA\JsonContent(
                 required: ['email', 'password'],
                 properties: [
-                    new OA\Property(property: 'email', type: 'string', format: 'email', example: 'user@example.com'),
-                    new OA\Property(property: 'password', type: 'string', format: 'password', example: 'Passw0rd!'),
+                    new OA\Property(property: 'email', type: 'string', format: 'email', example: 'shahabcheraghi@live.com'),
+                    new OA\Property(property: 'password', type: 'string', format: 'password', example: 'iShahab1234'),
                 ],
                 type: 'object'
             )
@@ -147,7 +147,6 @@ class AuthController extends BaseController
             'token'      => $token->plainTextToken,
             'expires_at' => $token->accessToken->expires_at?->toISOString(),
         ];
-
         return $this->sendResponse($payload, 'auth.login_success');
     }
 
