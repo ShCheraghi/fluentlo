@@ -147,6 +147,7 @@ class AuthController extends BaseController
             'token'      => $token->plainTextToken,
             'expires_at' => $token->accessToken->expires_at?->toISOString(),
         ];
+        \Log::debug('shahabss');
         return $this->sendResponse($payload, 'auth.login_success');
     }
 
