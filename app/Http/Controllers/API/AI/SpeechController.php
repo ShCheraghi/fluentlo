@@ -6,6 +6,7 @@ use App\Http\Controllers\API\BaseController;
 use App\Services\AI\SpeechToTextSimpleService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use OpenApi\Attributes as OA;
 
@@ -50,7 +51,6 @@ class SpeechController extends BaseController
                         new OA\Property(property: 'message', type: 'string', example: 'Hello world'),
                         new OA\Property(
                             property: 'data',
-                            type: 'object',
                             properties: [
                                 new OA\Property(property: 'text', type: 'string', example: 'Hello world'),
                                 new OA\Property(property: 'language', type: 'string', example: 'en'),
@@ -59,7 +59,8 @@ class SpeechController extends BaseController
                                 new OA\Property(property: 'word_count', type: 'integer', example: 2),
                                 new OA\Property(property: 'provider', type: 'string', example: 'rapidapi'),
                                 new OA\Property(property: 'processed_at', type: 'string', example: '2025-09-05T10:00:00Z'),
-                            ]
+                            ],
+                            type: 'object'
                         )
                     ],
                     type: 'object'
@@ -71,7 +72,6 @@ class SpeechController extends BaseController
     )]
     public function transcribe(Request $request): JsonResponse
     {
-        // یک اندپوینت منعطف: اگر audio_url باشد، اولویت با URL است
         $validator = Validator::make($request->all(), [
             'audio_file' => 'required_without:audio_url|file|mimes:wav,mp3,m4a,ogg,webm,flac|max:25600',
             'audio_url' => [
@@ -96,25 +96,57 @@ class SpeechController extends BaseController
             return $this->sendValidationError($validator->errors()->toArray());
         }
 
-        if ($request->filled('audio_url')) {
-            $result = $this->stt->transcribeFromPublicUrl($request->string('audio_url'));
-        } else {
-            $result = $this->stt->transcribe($request->file('audio_file'));
-        }
+        try {
+            if ($request->filled('audio_url')) {
+                $audioUrl = $request->string('audio_url')->toString();
 
-        if (!($result['success'] ?? false)) {
-            return $this->sendError('stt.transcribe_failed', ['error' => $result['error'] ?? null], 500);
-        }
+                // بررسی URL قبل از ارسال
+                if (filter_var($audioUrl, FILTER_VALIDATE_URL) === false) {
+                    return $this->sendError('stt.invalid_url', [], 422);
+                }
 
-        return $this->sendResponse([
-            'text' => $result['data']['text'] ?? '',
-            'language' => $result['data']['language'] ?? 'auto',
-            'confidence' => $result['data']['confidence'] ?? 0.0,
-            'duration' => $result['data']['duration'] ?? null,
-            'word_count' => $result['data']['word_count'] ?? null,
-            'provider' => $result['data']['provider'] ?? 'rapidapi',
-            'processed_at' => $result['data']['processed_at'] ?? now()->toISOString(),
-        ], $result['data']['text'] ?? '');
+                Log::info('STT: Processing URL', ['url' => $audioUrl]);
+                $result = $this->stt->transcribeFromPublicUrl($audioUrl);
+            } else {
+                $file = $request->file('audio_file');
+                Log::info('STT: Processing file', [
+                    'filename' => $file->getClientOriginalName(),
+                    'size' => $file->getSize(),
+                    'mime' => $file->getMimeType()
+                ]);
+                $result = $this->stt->transcribe($file);
+            }
+
+            if (!($result['success'] ?? false)) {
+                Log::error('STT failed', [
+                    'endpoint' => 'transcribe',
+                    'error' => $result['error'] ?? 'Unknown error',
+                ]);
+                return $this->sendError('stt.transcribe_failed', [
+                    'error' => $result['error'] ?? 'Unknown error'
+                ], 500);
+            }
+
+            return $this->sendResponse([
+                'text' => $result['data']['text'] ?? '',
+                'language' => $result['data']['language'] ?? 'auto',
+                'confidence' => $result['data']['confidence'] ?? 0.0,
+                'duration' => $result['data']['duration'] ?? null,
+                'word_count' => $result['data']['word_count'] ?? null,
+                'provider' => $result['data']['provider'] ?? 'rapidapi',
+                'processed_at' => $result['data']['processed_at'] ?? now()->toISOString(),
+            ], $result['data']['text'] ?? '');
+
+        } catch (\Throwable $e) {
+            Log::error('STT exception', [
+                'endpoint' => 'transcribe',
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return $this->sendError('stt.service_error', [], 500);
+        }
     }
 
     #[OA\Post(
@@ -160,12 +192,34 @@ class SpeechController extends BaseController
             return $this->sendValidationError($validator->errors()->toArray());
         }
 
-        $result = $this->stt->transcribeFromPublicUrl($request->string('audio_url'));
+        try {
+            $audioUrl = $request->string('audio_url')->toString();
 
-        if (!($result['success'] ?? false)) {
-            return $this->sendError('stt.transcribe_failed', ['error' => $result['error'] ?? null], 500);
+            Log::info('STT URL: Processing', ['url' => $audioUrl]);
+
+            $result = $this->stt->transcribeFromPublicUrl($audioUrl);
+
+            if (!($result['success'] ?? false)) {
+                Log::error('STT URL failed', [
+                    'url' => $audioUrl,
+                    'error' => $result['error'] ?? 'Unknown error',
+                ]);
+                return $this->sendError('stt.transcribe_failed', [
+                    'error' => $result['error'] ?? 'Unknown error'
+                ], 500);
+            }
+
+            return $this->sendResponse($result['data'], $result['data']['text'] ?? '');
+
+        } catch (\Throwable $e) {
+            Log::error('STT URL exception', [
+                'url' => $request->string('audio_url')->toString(),
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return $this->sendError('stt.service_error', [], 500);
         }
-
-        return $this->sendResponse($result['data'], $result['data']['text'] ?? '');
     }
 }

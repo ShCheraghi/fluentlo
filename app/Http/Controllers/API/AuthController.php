@@ -12,7 +12,6 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Str;
 use Laravel\Socialite\Facades\Socialite;
 use OpenApi\Attributes as OA;
 use Symfony\Component\HttpFoundation\RedirectResponse;
@@ -147,7 +146,7 @@ class AuthController extends BaseController
             'token'      => $token->plainTextToken,
             'expires_at' => $token->accessToken->expires_at?->toISOString(),
         ];
-        \Log::debug('shahabss');
+
         return $this->sendResponse($payload, 'auth.login_success');
     }
 
@@ -199,9 +198,8 @@ class AuthController extends BaseController
         } catch (\Throwable $e) {
             Log::error('Social redirect failed', [
                 'provider' => $provider,
-                'msg'      => $e->getMessage(),
+                'message'  => $e->getMessage(),
             ]);
-            report($e);
 
             return $this->sendError('auth.social_failed', ['provider' => $provider], 422);
         }
@@ -237,213 +235,55 @@ class AuthController extends BaseController
     )]
     public function socialCallback(string $provider): JsonResponse
     {
+        if (!in_array($provider, self::SUPPORTED_PROVIDERS, true)) {
+            return $this->sendError('auth.unsupported_provider', ['provider' => $provider], 422);
+        }
+
+        if (request('error')) {
+            return $this->sendError('auth.social_denied', ['provider' => $provider], 422);
+        }
+
+        if (!request()->has('code')) {
+            return $this->sendError('auth.missing_code', [], 422);
+        }
+
         try {
-            // لاگ اطلاعات اولیه برای دیباگ
-            Log::info('Social callback started', [
-                'provider' => $provider,
-                'query_params' => request()->all(),
-                'url' => request()->fullUrl()
-            ]);
+            $driver = Socialite::driver($provider)->stateless();
 
-            if (!in_array($provider, self::SUPPORTED_PROVIDERS, true)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unsupported provider',
-                    'debug' => 'Step 1: Provider validation failed',
-                    'provider' => $provider
-                ], 422);
-            }
-
-            if ($err = request('error')) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Provider returned error',
-                    'debug' => 'Step 2: Provider error',
-                    'error' => $err,
-                    'error_description' => request('error_description'),
-                    'provider' => $provider
-                ], 422);
-            }
-
-            if (!request()->has('code')) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Missing authorization code',
-                    'debug' => 'Step 3: Code validation failed',
-                    'query_params' => request()->all()
-                ], 422);
-            }
-
-            // لاگ تنظیمات گوگل
             if ($provider === 'google') {
-                Log::info('Google OAuth settings', [
-                    'client_id' => env('GOOGLE_CLIENT_ID'),
-                    'client_secret' => env('GOOGLE_CLIENT_SECRET') ? '[SET]' : '[NOT SET]',
-                    'redirect_url' => config('services.google.redirect'),
-                ]);
+                $driver->scopes(['openid', 'profile', 'email']);
             }
 
-            try {
-                $driver = Socialite::driver($provider)->stateless();
-                if ($provider === 'google') {
-                    $driver->scopes(['openid', 'profile', 'email']);
-                }
-            } catch (\Exception $e) {
-                Log::error('Socialite driver failed', [
-                    'provider' => $provider,
-                    'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString()
-                ]);
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Socialite driver failed',
-                    'debug' => 'Step 4: Driver creation failed',
-                    'error' => $e->getMessage(),
-                    'provider' => $provider
-                ], 500);
-            }
-
-            try {
-                // لاگ قبل از دریافت اطلاعات کاربر
-                Log::info('Attempting to get user from provider', ['provider' => $provider]);
-
-                $socialUser = $driver->user();
-
-                // لاگ موفقیت‌آمیز بودن دریافت اطلاعات کاربر
-                Log::info('Successfully received user from provider', [
-                    'provider' => $provider,
-                    'user_id' => $socialUser->id,
-                    'user_email' => $socialUser->email,
-                ]);
-            } catch (ClientException $e) {
-                $response = $e->getResponse();
-                $body = (string) $response->getBody();
-
-                Log::error('OAuth client error', [
-                    'provider' => $provider,
-                    'status_code' => $response->getStatusCode(),
-                    'response_body' => $body,
-                    'trace' => $e->getTraceAsString()
-                ]);
-
-                return response()->json([
-                    'success' => false,
-                    'message' => 'OAuth client error',
-                    'debug' => 'Step 5: User retrieval failed - Client Error',
-                    'provider' => $provider,
-                    'error' => $e->getMessage(),
-                    'response_body' => $body
-                ], 422);
-            } catch (ConnectException $e) {
-                Log::error('OAuth connection error', [
-                    'provider' => $provider,
-                    'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString()
-                ]);
-
-                return response()->json([
-                    'success' => false,
-                    'message' => 'OAuth connection error',
-                    'debug' => 'Step 5: User retrieval failed - Connection Error',
-                    'provider' => $provider,
-                    'error' => $e->getMessage()
-                ], 502);
-            } catch (\Exception $e) {
-                Log::error('OAuth unknown error', [
-                    'provider' => $provider,
-                    'error' => $e->getMessage(),
-                    'class' => get_class($e),
-                    'trace' => $e->getTraceAsString()
-                ]);
-
-                return response()->json([
-                    'success' => false,
-                    'message' => 'OAuth unknown error',
-                    'debug' => 'Step 5: User retrieval failed - Unknown Error',
-                    'provider' => $provider,
-                    'error' => $e->getMessage(),
-                    'class' => get_class($e)
-                ], 500);
-            }
+            $socialUser = $driver->user();
 
             if (!$socialUser || !$socialUser->email) {
-                Log::error('Invalid social user data', [
-                    'provider' => $provider,
-                    'social_user' => [
-                        'id' => $socialUser->id ?? null,
-                        'email' => $socialUser->email ?? null,
-                        'name' => $socialUser->name ?? null,
-                        'has_user' => !is_null($socialUser)
-                    ]
-                ]);
-
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Invalid social user data',
-                    'debug' => 'Step 6: Social user validation failed',
-                    'social_user' => [
-                        'id' => $socialUser->id ?? null,
-                        'email' => $socialUser->email ?? null,
-                        'name' => $socialUser->name ?? null,
-                        'has_user' => !is_null($socialUser)
-                    ]
-                ], 422);
+                return $this->sendError('auth.invalid_social_user', [], 422);
             }
 
-            try {
-                $result = $this->socialAuthService->handleSocialUser($provider, $socialUser);
+            $result = $this->socialAuthService->handleSocialUser($provider, $socialUser);
 
-                Log::info('Social authentication successful', [
-                    'provider' => $provider,
-                    'user_id' => $result['user']['id'] ?? null,
-                ]);
+            return $this->sendResponse($result, 'auth.social_success');
 
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Social authentication successful',
-                    'debug' => 'Step 7: All steps completed successfully',
-                    'data' => $result
-                ]);
-            } catch (\Exception $e) {
-                Log::error('Social auth service failed', [
-                    'provider' => $provider,
-                    'error' => $e->getMessage(),
-                    'class' => get_class($e),
-                    'line' => $e->getLine(),
-                    'file' => $e->getFile(),
-                    'trace' => $e->getTraceAsString()
-                ]);
-
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Social auth service failed',
-                    'debug' => 'Step 7: SocialAuthService failed',
-                    'provider' => $provider,
-                    'error' => $e->getMessage(),
-                    'class' => get_class($e),
-                    'line' => $e->getLine(),
-                    'file' => $e->getFile()
-                ], 500);
-            }
-        } catch (\Exception $e) {
-            Log::error('Unexpected error in social callback', [
-                'error' => $e->getMessage(),
-                'class' => get_class($e),
-                'line' => $e->getLine(),
-                'file' => $e->getFile(),
-                'trace' => $e->getTraceAsString()
+        } catch (ClientException $e) {
+            Log::error('Social auth client error', [
+                'provider' => $provider,
+                'message'  => $e->getMessage(),
             ]);
+            return $this->sendError('auth.social_client_error', [], 422);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Unexpected error in social callback',
-                'debug' => 'Unexpected Exception',
-                'error' => $e->getMessage(),
-                'class' => get_class($e),
-                'line' => $e->getLine(),
-                'file' => $e->getFile(),
-                'trace' => array_slice($e->getTrace(), 0, 5)
-            ], 500);
+        } catch (ConnectException $e) {
+            Log::error('Social auth connection error', [
+                'provider' => $provider,
+                'message'  => $e->getMessage(),
+            ]);
+            return $this->sendError('auth.social_connection_error', [], 502);
+
+        } catch (\Throwable $e) {
+            Log::error('Social auth failed', [
+                'provider' => $provider,
+                'message'  => $e->getMessage(),
+            ]);
+            return $this->sendError('auth.social_failed', [], 500);
         }
     }
 
