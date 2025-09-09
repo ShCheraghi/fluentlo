@@ -17,212 +17,91 @@ class SpeechToTextSimpleService
     {
     }
 
-    /** فایل → آپلود موقت → URL مطلق → STT */
+    /** فایل → مستقیم به RapidAPI */
     public function transcribe(UploadedFile $file): array
     {
-        // Debug info برای شناسایی مشکل
-        Log::info('STT DEBUG: Starting transcription', [
-            'original_filename' => $file->getClientOriginalName(),
-            'detected_mime' => $file->getMimeType(),
-            'file_extension' => $file->getClientOriginalExtension(),
-            'file_size' => $file->getSize(),
-            'real_mime' => mime_content_type($file->getRealPath()),
-            'timestamp' => now()->toISOString()
+        Log::info('STT: Processing file upload', [
+            'filename' => $file->getClientOriginalName(),
+            'size' => $file->getSize(),
+            'mime' => $file->getMimeType(),
+            'extension' => $file->getClientOriginalExtension()
         ]);
 
-        $absoluteUrl = $this->uploadTempAndGetAbsoluteUrl($file);
-        if (!$absoluteUrl) {
-            return ['success' => false, 'error' => 'Temporary file upload failed.'];
-        }
-
-        // تست manual URL قبل از ارسال
-        $this->manualUrlTest($absoluteUrl);
-
-        return $this->callStt($absoluteUrl, cleanupAfter: true);
-    }
-
-    private function uploadTempAndGetAbsoluteUrl(UploadedFile $file): ?string
-    {
-        $filename = 'temp_audio_' . time() . '_' . Str::random(8) . '.' . $file->getClientOriginalExtension();
-        $relativeDir = 'temp/audio';
-
-        $storedPath = Storage::disk('public')->putFileAs($relativeDir, $file, $filename);
-        if (!$storedPath) {
-            Log::error('STT DEBUG: File store failed', ['filename' => $filename]);
-            return null;
-        }
-
-        $absoluteUrl = Storage::disk('public')->url($storedPath);
-
-        if (!str_starts_with($absoluteUrl, 'http')) {
-            $baseUrl = rtrim(config('services.stt.public_base_url', config('app.url')), '/');
-            $absoluteUrl = $baseUrl . $absoluteUrl;
-        }
-
-        Log::info('STT DEBUG: File uploaded successfully', [
-            'stored_path' => $storedPath,
-            'absolute_url' => $absoluteUrl,
-            'file_exists' => Storage::disk('public')->exists($storedPath),
-            'file_size' => Storage::disk('public')->size($storedPath)
-        ]);
-
-        return $absoluteUrl;
+        // بجای آپلود موقتی، مستقیماً فایل را به RapidAPI ارسال می‌کنیم
+        return $this->transcribeFileDirectly($file);
     }
 
     /**
-     * تست manual URL - بررسی دقیق
+     * ارسال مستقیم فایل به RapidAPI
      */
-    private function manualUrlTest(string $url): void
+    private function transcribeFileDirectly(UploadedFile $file): array
     {
         try {
-            Log::info('STT DEBUG: Testing URL accessibility', ['url' => $url]);
+            // خواندن محتوای فایل
+            $fileContent = file_get_contents($file->getRealPath());
+            $filename = $file->getClientOriginalName();
+            $mimeType = $file->getMimeType();
 
-            // تست 1: HEAD request
-            $headResponse = Http::timeout(10)->head($url);
-            Log::info('STT DEBUG: HEAD test', [
-                'status' => $headResponse->status(),
-                'headers' => $headResponse->headers(),
-                'ok' => $headResponse->ok()
+            Log::info('STT: Sending file directly to RapidAPI', [
+                'filename' => $filename,
+                'content_length' => strlen($fileContent),
+                'mime_type' => $mimeType
             ]);
 
-            // تست 2: GET request (چند بایت اول)
-            $getResponse = Http::timeout(10)->get($url, [], [
-                'Range' => 'bytes=0-1023' // فقط 1KB اول
-            ]);
-
-            Log::info('STT DEBUG: GET test (first 1KB)', [
-                'status' => $getResponse->status(),
-                'content_length' => strlen($getResponse->body()),
-                'content_type' => $getResponse->header('content-type'),
-                'first_bytes' => bin2hex(substr($getResponse->body(), 0, 16))
-            ]);
-
-            // تست 3: cURL از خارج (شبیه‌سازی RapidAPI)
-            $curlTest = $this->simulateExternalAccess($url);
-            Log::info('STT DEBUG: External access simulation', $curlTest);
-
-        } catch (\Throwable $e) {
-            Log::error('STT DEBUG: URL test failed', [
-                'url' => $url,
-                'error' => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine()
-            ]);
-        }
-    }
-
-    /**
-     * شبیه‌سازی دسترسی خارجی
-     */
-    private function simulateExternalAccess(string $url): array
-    {
-        try {
+            // ارسال درخواست به RapidAPI با فایل
             $response = Http::withHeaders([
-                'User-Agent' => 'RapidAPI-STT-Service/1.0',
-                'Accept' => 'audio/*,*/*',
-            ])->timeout(15)->head($url);
-
-            return [
-                'accessible' => $response->ok(),
-                'status' => $response->status(),
-                'headers' => $response->headers(),
-                'error' => $response->ok() ? null : 'HTTP ' . $response->status()
-            ];
-        } catch (\Throwable $e) {
-            return [
-                'accessible' => false,
-                'error' => $e->getMessage(),
-                'type' => get_class($e)
-            ];
-        }
-    }
-
-    /** تماس به سرویس STT روی RapidAPI */
-    private function callStt(string $url, bool $cleanupAfter): array
-    {
-        try {
-            Log::info('STT DEBUG: Calling RapidAPI', [
-                'driver' => $this->driver,
-                'endpoint' => $this->endpoint,
-                'url' => $url,
-                'timestamp' => now()->toISOString()
-            ]);
-
-            $payload = ['url' => $url, 'task' => 'transcribe'];
-            $resp = $this->ai->driver($this->driver)->postNoBody($this->endpoint, $payload);
-
-            if ($cleanupAfter) {
-                $this->cleanupByAbsoluteUrl($url);
-            }
-
-            if (!$resp->ok()) {
-                Log::error('STT DEBUG: RapidAPI failed', [
-                    'endpoint' => $this->endpoint,
-                    'status' => $resp->status ?? null,
-                    'error' => $resp->error ?? null,
-                    'url' => $url,
-                    'response_data' => $resp->data ?? null,
-                    'response_raw' => method_exists($resp, 'raw') ? $resp->raw() : null
+                'x-rapidapi-host' => 'speech-to-text-ai.p.rapidapi.com',
+                'x-rapidapi-key' => config('services.rapidapi.key'), // کلید از config
+            ])
+                ->timeout(60)
+                ->attach('file', $fileContent, $filename)
+                ->post('https://speech-to-text-ai.p.rapidapi.com/transcribe', [
+                    'task' => 'transcribe',
+                    'lang' => 'auto' // یا en, fa, etc.
                 ]);
-                return ['success' => false, 'error' => $resp->error ?? 'STT API error'];
+
+            if (!$response->ok()) {
+                Log::error('STT: RapidAPI direct upload failed', [
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                    'headers' => $response->headers()
+                ]);
+
+                return [
+                    'success' => false,
+                    'error' => 'STT service returned: ' . $response->body()
+                ];
             }
 
-            $text = (string)($resp->data['text'] ?? '');
+            $data = $response->json();
+            $text = $data['text'] ?? '';
 
-            Log::info('STT DEBUG: Success', [
+            Log::info('STT: Direct upload success', [
                 'text_length' => strlen($text),
-                'text_preview' => substr($text, 0, 100),
-                'language' => $resp->data['language'] ?? 'auto'
+                'response_keys' => array_keys($data)
             ]);
 
             return [
                 'success' => true,
                 'data' => [
                     'text' => $text,
-                    'language' => (string)($resp->data['language'] ?? 'auto'),
-                    'confidence' => (float)($resp->data['confidence'] ?? 0.0),
-                    'duration' => $resp->data['duration'] ?? null,
+                    'language' => $data['language'] ?? 'auto',
+                    'confidence' => (float)($data['confidence'] ?? 0.0),
+                    'duration' => $data['duration'] ?? null,
                     'word_count' => $this->wordCount($text),
-                    'provider' => $this->driver,
+                    'provider' => 'rapidapi-direct',
                     'processed_at' => now()->toISOString(),
                 ],
             ];
-        } catch (\Throwable $e) {
-            if ($cleanupAfter) {
-                $this->cleanupByAbsoluteUrl($url);
-            }
 
-            Log::error('STT DEBUG: Exception in callStt', [
+        } catch (\Throwable $e) {
+            Log::error('STT: Direct upload exception', [
                 'message' => $e->getMessage(),
-                'url' => $url,
                 'file' => $e->getFile(),
-                'line' => $e->getLine(),
-                'trace' => array_slice($e->getTrace(), 0, 5)
+                'line' => $e->getLine()
             ]);
 
             return ['success' => false, 'error' => $e->getMessage()];
-        }
-    }
-
-    private function cleanupByAbsoluteUrl(string $absoluteUrl): void
-    {
-        try {
-            $path = parse_url($absoluteUrl, PHP_URL_PATH);
-            $relative = ltrim(str_replace('/storage', '', $path), '/');
-
-            if (str_starts_with($relative, 'temp/audio/')) {
-                $deleted = Storage::disk('public')->delete($relative);
-                Log::info('STT DEBUG: Cleanup', [
-                    'file' => $relative,
-                    'deleted' => $deleted,
-                    'url' => $absoluteUrl
-                ]);
-            }
-        } catch (\Throwable $e) {
-            Log::warning('STT DEBUG: Cleanup failed', [
-                'error' => $e->getMessage(),
-                'url' => $absoluteUrl
-            ]);
         }
     }
 
@@ -232,19 +111,71 @@ class SpeechToTextSimpleService
         return count($m[0]);
     }
 
-    /** مستقیم از URL عمومی */
+    /** برای URL های عمومی - روش قبلی */
     public function transcribeFromPublicUrl(string $audioUrl): array
     {
         if ($this->isLocalhostUrl($audioUrl)) {
-            return ['success' => false, 'error' => 'audio_url must be publicly reachable (not localhost/127.0.0.1).'];
+            return ['success' => false, 'error' => 'audio_url must be publicly reachable.'];
         }
 
-        Log::info('STT DEBUG: Direct URL transcription', ['url' => $audioUrl]);
+        Log::info('STT: Processing public URL', ['url' => $audioUrl]);
 
-        // تست URL قبل از ارسال
-        $this->manualUrlTest($audioUrl);
+        try {
+            // ارسال URL به RapidAPI
+            $response = Http::withHeaders([
+                'x-rapidapi-host' => 'speech-to-text-ai.p.rapidapi.com',
+                'x-rapidapi-key' => config('services.rapidapi.key'),
+            ])
+                ->timeout(60)
+                ->asForm()
+                ->post('https://speech-to-text-ai.p.rapidapi.com/transcribe', [
+                    'url' => $audioUrl,
+                    'task' => 'transcribe',
+                    'lang' => 'auto'
+                ]);
 
-        return $this->callStt($audioUrl, cleanupAfter: false);
+            if (!$response->ok()) {
+                Log::error('STT: RapidAPI URL failed', [
+                    'status' => $response->status(),
+                    'body' => $response->body(),
+                    'url' => $audioUrl
+                ]);
+
+                return [
+                    'success' => false,
+                    'error' => 'STT service error: ' . $response->body()
+                ];
+            }
+
+            $data = $response->json();
+            $text = $data['text'] ?? '';
+
+            Log::info('STT: URL transcription success', [
+                'text_length' => strlen($text),
+                'url' => $audioUrl
+            ]);
+
+            return [
+                'success' => true,
+                'data' => [
+                    'text' => $text,
+                    'language' => $data['language'] ?? 'auto',
+                    'confidence' => (float)($data['confidence'] ?? 0.0),
+                    'duration' => $data['duration'] ?? null,
+                    'word_count' => $this->wordCount($text),
+                    'provider' => 'rapidapi-url',
+                    'processed_at' => now()->toISOString(),
+                ],
+            ];
+
+        } catch (\Throwable $e) {
+            Log::error('STT: URL transcription exception', [
+                'message' => $e->getMessage(),
+                'url' => $audioUrl
+            ]);
+
+            return ['success' => false, 'error' => $e->getMessage()];
+        }
     }
 
     private function isLocalhostUrl(string $url): bool
