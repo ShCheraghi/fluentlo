@@ -184,4 +184,59 @@ class SpeechToTextSimpleService
     {
         return (bool)preg_match('/^(https?:\/\/)(localhost|127\.0\.0\.1)(:\d+)?\//i', $url);
     }
+
+    /**
+     * بررسی فرمت فایل
+     */
+    private function isSupportedFormat(UploadedFile $file): bool
+    {
+        $supportedMimes = [
+            'audio/wav', 'audio/wave', 'audio/x-wav',
+            'audio/mpeg', 'audio/mp3',
+            'audio/mp4', 'audio/m4a', 'audio/x-m4a',
+            'audio/ogg', 'audio/vorbis',
+            'audio/webm',
+            'audio/flac', 'audio/x-flac'
+        ];
+
+        $supportedExtensions = ['wav', 'mp3', 'm4a', 'ogg', 'webm', 'flac'];
+
+        $actualMime = $file->getMimeType();
+        $extension = strtolower($file->getClientOriginalExtension());
+
+        Log::info('STT: File format check', [
+            'filename' => $file->getClientOriginalName(),
+            'detected_mime' => $actualMime,
+            'extension' => $extension,
+            'size' => $file->getSize()
+        ]);
+
+        return in_array($actualMime, $supportedMimes) || in_array($extension, $supportedExtensions);
+    }
+
+    /**
+     * تست دسترسی URL
+     */
+    private function testUrlAccessibility(string $url): bool
+    {
+        try {
+            $response = Http::timeout(15)->head($url);
+
+            Log::info('STT: URL accessibility test', [
+                'url' => $url,
+                'status' => $response->status(),
+                'content_type' => $response->header('content-type'),
+                'content_length' => $response->header('content-length'),
+                'accessible' => $response->ok()
+            ]);
+
+            return $response->ok();
+        } catch (\Throwable $e) {
+            Log::error('STT: URL accessibility test failed', [
+                'url' => $url,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
 }
