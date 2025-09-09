@@ -10,8 +10,8 @@ use Illuminate\Support\Str;
 
 class SpeechToTextSimpleService
 {
-    private string $driver = 'rapidapi';   // در آینده عوضش کنی فقط همین‌جا
-    private string $endpoint = 'transcribe'; // مسیر driver در AIManager
+    private string $driver = 'rapidapi';
+    private string $endpoint = 'transcribe';
 
     public function __construct(private AIManager $ai)
     {
@@ -25,42 +25,74 @@ class SpeechToTextSimpleService
             return ['success' => false, 'error' => 'Temporary file upload failed.'];
         }
 
-        $res = $this->callStt($absoluteUrl, cleanupAfter: true);
-        return $res;
+        Log::info('STT: Generated temp URL', ['url' => $absoluteUrl]);
+
+        return $this->callStt($absoluteUrl, cleanupAfter: true);
     }
 
     private function uploadTempAndGetAbsoluteUrl(UploadedFile $file): ?string
     {
         $filename = 'temp_audio_' . time() . '_' . Str::random(8) . '.' . $file->getClientOriginalExtension();
         $relativeDir = 'temp/audio';
-        $storedPath = Storage::disk('public')->putFileAs($relativeDir, $file, $filename);
-        if (!$storedPath) return null;
 
-        $publicPath = Storage::disk('public')->url($storedPath); // "/storage/temp/audio/xxx.ext"
-        $base = rtrim(config('services.stt.public_base_url', config('app.url')), '/'); // از env
-        return $base . $publicPath; // "https://domain.tld/storage/temp/audio/xxx.ext"
+        $storedPath = Storage::disk('public')->putFileAs($relativeDir, $file, $filename);
+        if (!$storedPath) {
+            Log::error('STT: Failed to store file', ['filename' => $filename]);
+            return null;
+        }
+
+        // مشکل اینجا بود! Storage::url() خودش URL کامل برمی‌گردونه
+        $absoluteUrl = Storage::disk('public')->url($storedPath);
+
+        // اگر URL کامل نیست، base URL اضافه کن
+        if (!str_starts_with($absoluteUrl, 'http')) {
+            $baseUrl = rtrim(config('services.stt.public_base_url', config('app.url')), '/');
+            $absoluteUrl = $baseUrl . $absoluteUrl;
+        }
+
+        Log::info('STT: File uploaded', [
+            'stored_path' => $storedPath,
+            'absolute_url' => $absoluteUrl
+        ]);
+
+        return $absoluteUrl;
     }
 
     /** تماس به سرویس STT روی RapidAPI */
     private function callStt(string $url, bool $cleanupAfter): array
     {
         try {
-            $payload = ['url' => $url, 'task' => 'transcribe']; // lang=auto by provider
+            Log::info('STT: Calling API', [
+                'driver' => $this->driver,
+                'endpoint' => $this->endpoint,
+                'url' => $url
+            ]);
+
+            $payload = ['url' => $url, 'task' => 'transcribe'];
             $resp = $this->ai->driver($this->driver)->postNoBody($this->endpoint, $payload);
 
-            if ($cleanupAfter) $this->cleanupByAbsoluteUrl($url);
+            if ($cleanupAfter) {
+                $this->cleanupByAbsoluteUrl($url);
+            }
 
             if (!$resp->ok()) {
-                Log::warning('STT failed', [
+                Log::error('STT API failed', [
                     'endpoint' => $this->endpoint,
                     'status' => $resp->status ?? null,
                     'error' => $resp->error ?? null,
                     'url' => $url,
+                    'response_data' => $resp->data ?? null
                 ]);
-                return ['success' => false, 'error' => $resp->error ?? 'STT error'];
+                return ['success' => false, 'error' => $resp->error ?? 'STT API error'];
             }
 
             $text = (string)($resp->data['text'] ?? '');
+
+            Log::info('STT: Success', [
+                'text_length' => strlen($text),
+                'language' => $resp->data['language'] ?? 'auto'
+            ]);
+
             return [
                 'success' => true,
                 'data' => [
@@ -74,8 +106,17 @@ class SpeechToTextSimpleService
                 ],
             ];
         } catch (\Throwable $e) {
-            if ($cleanupAfter) $this->cleanupByAbsoluteUrl($url);
-            Log::error('STT transcribe exception', ['e' => $e->getMessage(), 'url' => $url]);
+            if ($cleanupAfter) {
+                $this->cleanupByAbsoluteUrl($url);
+            }
+
+            Log::error('STT exception', [
+                'message' => $e->getMessage(),
+                'url' => $url,
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+
             return ['success' => false, 'error' => $e->getMessage()];
         }
     }
@@ -83,13 +124,21 @@ class SpeechToTextSimpleService
     private function cleanupByAbsoluteUrl(string $absoluteUrl): void
     {
         try {
-            $path = parse_url($absoluteUrl, PHP_URL_PATH);                // "/storage/temp/audio/xxx.ext"
-            $relative = ltrim(str_replace('/storage', '', $path), '/');   // "temp/audio/xxx.ext"
+            $path = parse_url($absoluteUrl, PHP_URL_PATH);
+            $relative = ltrim(str_replace('/storage', '', $path), '/');
+
             if (str_starts_with($relative, 'temp/audio/')) {
-                Storage::disk('public')->delete($relative);
+                $deleted = Storage::disk('public')->delete($relative);
+                Log::info('STT: Temp file cleanup', [
+                    'file' => $relative,
+                    'deleted' => $deleted
+                ]);
             }
         } catch (\Throwable $e) {
-            Log::warning('STT temp cleanup failed', ['e' => $e->getMessage(), 'url' => $absoluteUrl]);
+            Log::warning('STT: Cleanup failed', [
+                'error' => $e->getMessage(),
+                'url' => $absoluteUrl
+            ]);
         }
     }
 
@@ -102,19 +151,30 @@ class SpeechToTextSimpleService
     /** مستقیم از URL عمومی */
     public function transcribeFromPublicUrl(string $audioUrl): array
     {
-        // رد کردن localhost/127.*
         if ($this->isLocalhostUrl($audioUrl)) {
             return ['success' => false, 'error' => 'audio_url must be publicly reachable (not localhost/127.0.0.1).'];
         }
 
-        // Preflight (اختیاری ولی مفید)
+        // Preflight check
         try {
-            $head = Http::timeout(6)->head($audioUrl);
+            $head = Http::timeout(10)->head($audioUrl);
             if (!$head->ok()) {
-                Log::warning('STT preflight failed', ['status' => $head->status(), 'url' => $audioUrl]);
+                Log::warning('STT: URL preflight failed', [
+                    'status' => $head->status(),
+                    'url' => $audioUrl
+                ]);
+            } else {
+                Log::info('STT: URL preflight OK', [
+                    'content_type' => $head->header('content-type'),
+                    'content_length' => $head->header('content-length'),
+                    'url' => $audioUrl
+                ]);
             }
         } catch (\Throwable $e) {
-            Log::warning('STT preflight exception', ['e' => $e->getMessage(), 'url' => $audioUrl]);
+            Log::warning('STT: Preflight exception', [
+                'error' => $e->getMessage(),
+                'url' => $audioUrl
+            ]);
         }
 
         return $this->callStt($audioUrl, cleanupAfter: false);
