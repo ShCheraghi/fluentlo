@@ -16,8 +16,7 @@
         "laravel/socialite": "^5.23",
         "laravel/tinker": "^2.10.1",
         "mikebronner/laravel-model-caching": "^12.0",
-        "monolog/monolog": "^3.0",
-        "rollbar/rollbar-laravel": "^8.1"
+        "opcodesio/log-viewer": "^3.19"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",
