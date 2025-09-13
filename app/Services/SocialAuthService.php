@@ -69,6 +69,14 @@ class SocialAuthService
     }
 
     /**
+     * Check if provider is supported
+     */
+    private function isProviderSupported(string $provider): bool
+    {
+        return in_array($provider, self::SUPPORTED_PROVIDERS);
+    }
+
+    /**
      * Find existing user or create new one
      */
     private function findOrCreateUser(string $provider, SocialiteUser $socialUser): User
@@ -89,20 +97,6 @@ class SocialAuthService
 
         // Create new user
         return $this->createUserFromSocialData($provider, $socialUser);
-    }
-
-    /**
-     * Create new user from social data
-     */
-    private function createUserFromSocialData(string $provider, SocialiteUser $socialUser): User
-    {
-
-        return User::create([
-            'name' => $socialUser->name ?? $socialUser->nickname ?? 'Unknown User',
-            'email' => $socialUser->email,
-            'avatar' => $socialUser->avatar ?? null,
-            'email_verified_at' => $this->isEmailVerifiedByProvider($provider, $socialUser) ? now() : null,
-        ]);
     }
 
     /**
@@ -133,6 +127,33 @@ class SocialAuthService
     }
 
     /**
+     * Create new user from social data
+     */
+    private function createUserFromSocialData(string $provider, SocialiteUser $socialUser): User
+    {
+
+        return User::create([
+            'name' => $socialUser->name ?? $socialUser->nickname ?? 'Unknown User',
+            'email' => $socialUser->email,
+            'avatar' => $socialUser->avatar ?? null,
+            'email_verified_at' => $this->isEmailVerifiedByProvider($provider, $socialUser) ? now() : null,
+        ]);
+    }
+
+    private function isEmailVerifiedByProvider(string $provider, \Laravel\Socialite\Contracts\User $socialUser): bool
+    {
+        if ($provider === 'google') {
+            return (bool)($socialUser->user['email_verified'] ?? $socialUser->email_verified ?? true);
+        }
+
+        if ($provider === 'facebook') {
+            return (bool)($socialUser->user['verified'] ?? false);
+        }
+
+        return false;
+    }
+
+    /**
      * Update or create social account record
      */
     private function updateOrCreateSocialAccount(User $user, string $provider, SocialiteUser $socialUser): SocialAccount
@@ -152,14 +173,6 @@ class SocialAuthService
                 'expires_in' => null, // Usually not provided by Laravel Socialite
             ]
         );
-    }
-
-    /**
-     * Check if provider is supported
-     */
-    private function isProviderSupported(string $provider): bool
-    {
-        return in_array($provider, self::SUPPORTED_PROVIDERS);
     }
 
     /**
@@ -204,18 +217,5 @@ class SocialAuthService
         return $user->socialAccounts()
             ->pluck('provider')
             ->toArray();
-    }
-
-    private function isEmailVerifiedByProvider(string $provider, \Laravel\Socialite\Contracts\User $socialUser): bool
-    {
-        if ($provider === 'google') {
-            return (bool)($socialUser->user['email_verified'] ?? $socialUser->email_verified ?? true);
-        }
-
-        if ($provider === 'facebook') {
-            return (bool)($socialUser->user['verified'] ?? false);
-        }
-
-        return false;
     }
 }

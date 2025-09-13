@@ -1,76 +1,59 @@
 <?php
-
 namespace App\Services\AI\Drivers;
 
-use App\Services\AI\Contracts\AIDriverInterface;
-use App\Services\AI\DTO\AIResult;
-use Illuminate\Http\Client\PendingRequest;
-use Illuminate\Support\Facades\Http;
+use App\Exceptions\AIException;
+use GuzzleHttp\Client;
+use GuzzleHttp\Exception\RequestException;
+use GuzzleHttp\HandlerStack;
+use GuzzleHttp\Handler\CurlMultiHandler;
 
-abstract class BaseDriver implements AIDriverInterface
+abstract class BaseDriver
 {
     protected array $config;
+    protected Client $client;
+    protected static ?HandlerStack $sharedHandler = null;
 
-    public function __construct(array $driverConfig)
+    public function __construct(array $config)
     {
-        $this->config = $driverConfig;
-    }
+        $this->config = $config;
 
-    public function get(string $operation, array $query = []): AIResult
-    {
-        try {
-            $res = $this->http()->get($this->resolveUrl($operation), $query);
-            return $res->successful()
-                ? new AIResult(true, $res->json(), null, $res->status(), $res->headers())
-                : new AIResult(false, null, $res->body(), $res->status(), $res->headers());
-        } catch (\Throwable $e) {
-            return new AIResult(false, null, $e->getMessage());
-        }
-    }
-
-    protected function http(): PendingRequest
-    {
-        $headers = $this->config['headers'] ?? [];
-        $timeout = $this->config['timeout'] ?? 30;
-
-        $req = Http::withHeaders($headers)
-            ->timeout($timeout)
-            ->connectTimeout(10);
-
-        if (!empty($this->config['retry']['times']) && !empty($this->config['retry']['sleep'])) {
-            $req = $req->retry($this->config['retry']['times'], $this->config['retry']['sleep'], throw: false);
+        if (!self::$sharedHandler) {
+            $multi = new CurlMultiHandler(); // connection pooling
+            self::$sharedHandler = HandlerStack::create($multi);
         }
 
-        return $req;
+        $this->client = new Client([
+            'handler'          => self::$sharedHandler,
+            'read_timeout'     => 10.0,
+            'http_errors'      => false,
+            'version'          => 2.0,
+            'headers'          => [
+                'Accept'           => 'application/json',
+                'Accept-Encoding'  => 'gzip, deflate, br',
+                'Connection'       => 'keep-alive',
+            ],
+            'decode_content'   => true,
+        ]);
     }
 
-    abstract protected function resolveUrl(string $operation): string;
-
-    public function postJson(string $operation, array $json = [], array $query = []): AIResult
+    protected function makeRequest(string $method, string $url, array $options = []): array
     {
         try {
-            $res = $this->http()->withQueryParameters($query)
-                ->post($this->resolveUrl($operation), $json);
+            $response = $this->client->request($method, $url, $options);
 
-            return $res->successful()
-                ? new AIResult(true, $res->json(), null, $res->status(), $res->headers())
-                : new AIResult(false, null, $res->body(), $res->status(), $res->headers());
-        } catch (\Throwable $e) {
-            return new AIResult(false, null, $e->getMessage());
-        }
-    }
+            $status = $response->getStatusCode();
+            $body   = (string) $response->getBody();
+            $json   = json_decode($body, true);
 
-    public function postNoBody(string $operation, array $query = []): AIResult
-    {
-        try {
-            $res = $this->http()->withQueryParameters($query)
-                ->send('POST', $this->resolveUrl($operation)); // بدون body
+            if ($status >= 400) {
+                throw new AIException("Upstream error ({$status}): " . ($json['error']['message'] ?? $body), $status);
+            }
 
-            return $res->successful()
-                ? new AIResult(true, $res->json(), null, $res->status(), $res->headers())
-                : new AIResult(false, null, $res->body(), $res->status(), $res->headers());
-        } catch (\Throwable $e) {
-            return new AIResult(false, null, $e->getMessage());
+            return is_array($json) ? $json : ['raw' => $body];
+        } catch (RequestException $e) {
+            throw new AIException("API request failed: " . $e->getMessage(), $e->getCode(), $e);
+        } catch (\Exception $e) {
+            throw new AIException("Unexpected error: " . $e->getMessage(), $e->getCode(), $e);
         }
     }
 }
