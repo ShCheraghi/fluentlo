@@ -67,6 +67,21 @@ class RapidApiDriver extends BaseDriver implements AIDriverInterface
 
     public function chat(array $data): array
     {
-        throw new AIException('Chat not implemented for RapidAPI driver');
+        // RapidAPI برای GPT-4
+        $url = 'https://cheapest-gpt-4-turbo-gpt-4-vision-chatgpt-openai-ai-api.p.rapidapi.com/v1/chat/completions';
+
+        return $this->makeRequest('POST', $url, [
+            'json' => [
+                'model' => $data['model'] ?? 'gpt-4o',
+                'messages' => $data['messages'],
+                'max_tokens' => $data['max_tokens'] ?? 1000,
+                'temperature' => $data['temperature'] ?? 0.7,
+                'stream' => false
+            ],
+            'headers' => array_merge($this->getHeaders(), [
+                'Content-Type' => 'application/json',
+                'x-rapidapi-host' => 'cheapest-gpt-4-turbo-gpt-4-vision-chatgpt-openai-ai-api.p.rapidapi.com'
+            ])
+        ]);
     }
 }

@@ -4,6 +4,7 @@ use App\Http\Controllers\API\AI\SpeechController;
 use App\Http\Controllers\API\AppVersionController;
 use App\Http\Controllers\API\AuthController;
 use App\Http\Controllers\API\AuthPasswordController;
+use App\Http\Controllers\API\ConversationController;
 use App\Http\Controllers\API\OnboardingController;
 use App\Http\Controllers\API\TranscriptionController;
 use Illuminate\Support\Facades\Route;
@@ -48,17 +49,22 @@ Route::prefix('v1/app')->name('app.')->group(function () {
     });
 
     // مسیرهای مربوط به هوش مصنوعی
-    Route::prefix('ai')->middleware(['auth:sanctum'])->group(function () {
+    // Conversation Routes (Unified)
+    Route::prefix('conversation')->name('conversation.')->middleware(['auth:sanctum'])->group(function () {
+        // متد 1: تبدیل صوت به متن (با پارامتر نوع ورودی)
+        Route::post('transcribe', [ConversationController::class, 'transcribe'])
+            ->middleware('throttle:10,1')
+            ->name('transcribe');
 
-        // مسیرهای جدید برای TranscriptionController
-        Route::prefix('transcription')->name('transcription.')->group(function () {
-            Route::post('url', [TranscriptionController::class, 'transcribeUrl'])
-                ->middleware('throttle:10,1')
-                ->name('url');
-            Route::post('file', [TranscriptionController::class, 'transcribeFile'])
-                ->middleware('throttle:10,1')
-                ->name('file');
-        });
+        // متد 2: شروع مکالمه جدید
+        Route::post('start', [ConversationController::class, 'start'])
+            ->middleware('throttle:5,1')
+            ->name('start');
+
+        // متد 3: ارسال پیام (متنی یا صوتی)
+        Route::post('message', [ConversationController::class, 'message'])
+            ->middleware('throttle:30,1')
+            ->name('message');
     });
 });
 

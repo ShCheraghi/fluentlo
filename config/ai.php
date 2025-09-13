@@ -7,6 +7,7 @@ return [
             'host' => env('RAPIDAPI_HOST', 'speech-to-text-ai.p.rapidapi.com'),
             'key' => env('RAPIDAPI_KEY'),
             'timeout' => 60,
+            'chat_host' => 'cheapest-gpt-4-turbo-gpt-4-vision-chatgpt-openai-ai-api.p.rapidapi.com',
         ],
 
         'openai' => [

@@ -38,8 +38,15 @@ abstract class BaseDriver
 
     protected function makeRequest(string $method, string $url, array $options = []): array
     {
+
+        $options['timeout'] = 5.0;
+
+        if (!isset($options['headers']['Connection'])) {
+            $options['headers']['Connection'] = 'keep-alive';
+        }
         try {
             $response = $this->client->request($method, $url, $options);
+
 
             $status = $response->getStatusCode();
             $body   = (string) $response->getBody();
@@ -51,6 +58,9 @@ abstract class BaseDriver
 
             return is_array($json) ? $json : ['raw' => $body];
         } catch (RequestException $e) {
+            if ($e->getCode() === 28) { // timeout
+                throw new AIException("API request timeout", 28);
+            }
             throw new AIException("API request failed: " . $e->getMessage(), $e->getCode(), $e);
         } catch (\Exception $e) {
             throw new AIException("Unexpected error: " . $e->getMessage(), $e->getCode(), $e);
