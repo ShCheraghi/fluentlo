@@ -22,5 +22,7 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# L5-Swagger generated files
 storage/api-docs/api-docs.json
 storage/api-docs/api-docs.yaml
