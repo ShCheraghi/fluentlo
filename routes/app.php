@@ -1,15 +1,12 @@
 <?php
 
-use App\Http\Controllers\API\AI\SpeechController;
 use App\Http\Controllers\API\AppVersionController;
 use App\Http\Controllers\API\AuthController;
 use App\Http\Controllers\API\AuthPasswordController;
 use App\Http\Controllers\API\ConversationController;
 use App\Http\Controllers\API\OnboardingController;
-use App\Http\Controllers\API\TranscriptionController;
+use App\Http\Controllers\API\UserAssessmentController;
 use Illuminate\Support\Facades\Route;
-
-// اضافه شده
 
 /*
 |--------------------------------------------------------------------------
@@ -17,6 +14,7 @@ use Illuminate\Support\Facades\Route;
 |--------------------------------------------------------------------------
 */
 Route::prefix('v1/app')->name('app.')->group(function () {
+
     Route::prefix('auth')->name('auth.')->group(function () {
         Route::post('register', [AuthController::class, 'register'])->name('register')->middleware('throttle:10,1');
         Route::post('login', [AuthController::class, 'login'])->name('login')->middleware('throttle:10,1');
@@ -48,24 +46,33 @@ Route::prefix('v1/app')->name('app.')->group(function () {
             ->name('latest')->middleware('throttle:30,1');
     });
 
-    // مسیرهای مربوط به هوش مصنوعی
-    // Conversation Routes (Unified)
+    Route::prefix('assessment')->name('assessment.')->middleware(['auth:sanctum'])->group(function () {
+        Route::post('user', [UserAssessmentController::class, 'store'])
+            ->middleware('throttle:10,1')
+            ->name('store');
+        Route::get('user', [UserAssessmentController::class, 'show'])
+            ->middleware('throttle:30,1')
+            ->name('show');
+        Route::delete('user', [UserAssessmentController::class, 'destroy'])
+            ->middleware('throttle:5,1')
+            ->name('destroy');
+    });
+
     Route::prefix('conversation')->name('conversation.')->middleware(['auth:sanctum'])->group(function () {
         // متد 1: تبدیل صوت به متن (با پارامتر نوع ورودی)
         Route::post('transcribe', [ConversationController::class, 'transcribe'])
             ->middleware('throttle:10,1')
             ->name('transcribe');
-
         // متد 2: شروع مکالمه جدید
         Route::post('start', [ConversationController::class, 'start'])
             ->middleware('throttle:5,1')
             ->name('start');
-
         // متد 3: ارسال پیام (متنی یا صوتی)
         Route::post('message', [ConversationController::class, 'message'])
             ->middleware('throttle:30,1')
             ->name('message');
     });
+
 });
 
 /*
