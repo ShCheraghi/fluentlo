@@ -16,6 +16,7 @@ use Symfony\Component\HttpFoundation\Response;
 )]
 class UserAssessmentController extends BaseController
 {
+    
     protected AiPromptService $aiPromptService;
 
     public function __construct(AiPromptService $aiPromptService)
