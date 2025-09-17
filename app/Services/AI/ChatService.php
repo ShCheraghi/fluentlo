@@ -5,7 +5,7 @@ use App\Enums\LevelEnum;
 use App\Facades\AI;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Redis;
+use Illuminate\Support\Facades\DB;
 
 class ChatService
 {
@@ -20,12 +20,23 @@ class ChatService
             'expires_at' => now()->addHours(2)->toISOString()
         ];
 
-        // ذخیره در Redis با TTL خودکار
-        Redis::setex(
+        // ذخیره در کش با TTL خودکار (استفاده از Cache facade به جای Redis)
+        Cache::put(
             "conversation:{$conversationId}",
-            7200, // 2 ساعت به ثانیه
-            json_encode($conversationData)
+            $conversationData,
+            now()->addHours(2) // 2 ساعت
         );
+
+        // همچنین می‌توانید در پایگاه داده ذخیره کنید برای پایداری بیشتر
+        DB::table('conversations')->insert([
+            'id' => $conversationId,
+            'user_id' => $userId,
+            'level' => $level->value,
+            'data' => json_encode($conversationData),
+            'created_at' => now(),
+            'updated_at' => now(),
+            'expires_at' => now()->addHours(2)
+        ]);
 
         $greeting = $this->getGreeting($level);
         return [
@@ -39,26 +50,39 @@ class ChatService
 
     public function sendMessage(string $conversationId, string $message): array
     {
-        // بازیابی از Redis
-        $conversationJson = Redis::get("conversation:{$conversationId}");
-        if (!$conversationJson) {
-            throw new \Exception('Conversation not found or expired');
+        // بازیابی از کش (استفاده از Cache facade به جای Redis)
+        $conversation = Cache::get("conversation:{$conversationId}");
+
+        // اگر در کش نبود، از پایگاه داده بازیابی کن
+        if (!$conversation) {
+            $dbRecord = DB::table('conversations')
+                ->where('id', $conversationId)
+                ->where('expires_at', '>', now())
+                ->first();
+
+            if (!$dbRecord) {
+                throw new \Exception('Conversation not found or expired');
+            }
+
+            $conversation = json_decode($dbRecord->data, true);
+            // دوباره در کش قرار بده برای دسترسی سریع‌تر در آینده
+            Cache::put(
+                "conversation:{$conversationId}",
+                $conversation,
+                now()->addHours(2)
+            );
         }
 
-        $conversation = json_decode($conversationJson, true);
         $level = LevelEnum::from($conversation['level']);
 
         // بهینه‌سازی: کاهش تعداد پیام‌های ارسالی به AI
         $messages = $this->prepareMessages($conversation['history'], $message, $level);
 
-        // استفاده از کش برای پاسخ‌های تکراری
+        // استفاده از کش برای پاسخ‌های تکراری (استفاده از Cache facade به جای Redis)
         $cacheKey = 'ai_response:' . md5(json_encode($messages));
-        if (Redis::exists($cacheKey)) {
-            $aiResponse = json_decode(Redis::get($cacheKey), true);
-        } else {
-            $aiResponse = $this->callAI($messages, $level);
-            Redis::setex($cacheKey, 300, json_encode($aiResponse)); // کش 5 دقیقه‌ای
-        }
+        $aiResponse = Cache::remember($cacheKey, now()->addMinutes(5), function() use ($messages, $level) {
+            return $this->callAI($messages, $level);
+        });
 
         $processed = $this->processResponse($aiResponse);
 
@@ -75,12 +99,20 @@ class ChatService
             $conversation['history'] = array_slice($conversation['history'], -10);
         }
 
-        // به‌روزرسانی Redis با تمدید TTL
-        Redis::setex(
+        // به‌روزرسانی کش با تمدید TTL (استفاده از Cache facade به جای Redis)
+        Cache::put(
             "conversation:{$conversationId}",
-            7200,
-            json_encode($conversation)
+            $conversation,
+            now()->addHours(2)
         );
+
+        // به‌روزرسانی پایگاه داده
+        DB::table('conversations')
+            ->where('id', $conversationId)
+            ->update([
+                'data' => json_encode($conversation),
+                'updated_at' => now()
+            ]);
 
         return [
             'conversation_id' => $conversationId,
@@ -107,25 +139,20 @@ class ChatService
             $fileHash = md5_file($audioPath);
             $cacheKey = "voice_transcription:{$fileHash}";
 
-            if (Cache::has($cacheKey)) {
-                return Cache::get($cacheKey);
-            }
+            // استفاده از Cache facade با remember برای کش کردن نتایج
+            return Cache::remember($cacheKey, now()->addHour(), function() use ($audioPath) {
+                // استفاده از AI Manager بجای مستقیم API call
+                $result = AI::driver('rapidapi')->transcribe([
+                    'file' => $audioPath,
+                    'lang' => 'en',
+                    'task' => 'transcribe'
+                ]);
 
-            // استفاده از AI Manager بجای مستقیم API call
-            $result = AI::driver('rapidapi')->transcribe([
-                'file' => $audioPath,
-                'lang' => 'en',
-                'task' => 'transcribe'
-            ]);
-
-            $response = [
-                'success' => true,
-                'text' => $result['text'] ?? ''
-            ];
-
-            Cache::put($cacheKey, $response, now()->addHour());
-
-            return $response;
+                return [
+                    'success' => true,
+                    'text' => $result['text'] ?? ''
+                ];
+            });
 
         } catch (\Exception $e) {
             return [

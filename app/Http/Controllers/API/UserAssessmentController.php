@@ -16,7 +16,6 @@ use Symfony\Component\HttpFoundation\Response;
 )]
 class UserAssessmentController extends BaseController
 {
-    
     protected AiPromptService $aiPromptService;
 
     public function __construct(AiPromptService $aiPromptService)
@@ -479,7 +478,6 @@ class UserAssessmentController extends BaseController
 
         return $mapping[$optionId] ?? $optionId;
     }
-
     #[OA\Get(
         path: "/v1/app/assessment/user",
         operationId: "getUserAssessment",
@@ -562,7 +560,6 @@ class UserAssessmentController extends BaseController
 
         return $this->sendResponse($responseData, 'assessment.retrieved');
     }
-
     #[OA\Delete(
         path: "/v1/app/assessment/user",
         operationId: "deleteUserAssessment",
