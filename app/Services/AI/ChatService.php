@@ -3,39 +3,40 @@ namespace App\Services\AI;
 
 use App\Enums\LevelEnum;
 use App\Facades\AI;
+use App\Models\Conversation; // استفاده از مدل به جای DB
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class ChatService
 {
     public function startConversation(int $userId, LevelEnum $level): array
     {
-        $conversationId = uniqid('conv_' . $userId . '_');
+        $conversationId = 'conv_' . $userId . '_' . Str::random(20);
+        $expiresAt = now()->addHours(2);
+
         $conversationData = [
             'user_id' => $userId,
             'level' => $level->value,
             'history' => [],
             'created_at' => now()->toISOString(),
-            'expires_at' => now()->addHours(2)->toISOString()
+            'expires_at' => $expiresAt->toISOString()
         ];
 
-        // ذخیره در کش با TTL خودکار (استفاده از Cache facade به جای Redis)
+        // ذخیره در کش
         Cache::put(
             "conversation:{$conversationId}",
             $conversationData,
-            now()->addHours(2) // 2 ساعت
+            $expiresAt
         );
 
-        // همچنین می‌توانید در پایگاه داده ذخیره کنید برای پایداری بیشتر
-        DB::table('conversations')->insert([
+        // ذخیره در دیتابیس با استفاده از مدل
+        Conversation::create([
             'id' => $conversationId,
             'user_id' => $userId,
             'level' => $level->value,
-            'data' => json_encode($conversationData),
-            'created_at' => now(),
-            'updated_at' => now(),
-            'expires_at' => now()->addHours(2)
+            'history' => [],
+            'expires_at' => $expiresAt,
         ]);
 
         $greeting = $this->getGreeting($level);
@@ -50,13 +51,12 @@ class ChatService
 
     public function sendMessage(string $conversationId, string $message): array
     {
-        // بازیابی از کش (استفاده از Cache facade به جای Redis)
+        // بازیابی از کش
         $conversation = Cache::get("conversation:{$conversationId}");
 
-        // اگر در کش نبود، از پایگاه داده بازیابی کن
         if (!$conversation) {
-            $dbRecord = DB::table('conversations')
-                ->where('id', $conversationId)
+            // اگر در کش نبود، از دیتابیس بازیابی کن
+            $dbRecord = Conversation::where('id', $conversationId)
                 ->where('expires_at', '>', now())
                 ->first();
 
@@ -64,12 +64,19 @@ class ChatService
                 throw new \Exception('Conversation not found or expired');
             }
 
-            $conversation = json_decode($dbRecord->data, true);
-            // دوباره در کش قرار بده برای دسترسی سریع‌تر در آینده
+            $conversation = [
+                'user_id' => $dbRecord->user_id,
+                'level' => $dbRecord->level,
+                'history' => $dbRecord->history,
+                'created_at' => $dbRecord->created_at->toISOString(),
+                'expires_at' => $dbRecord->expires_at->toISOString()
+            ];
+
+            // دوباره در کش قرار بده
             Cache::put(
                 "conversation:{$conversationId}",
                 $conversation,
-                now()->addHours(2)
+                $dbRecord->expires_at
             );
         }
 
@@ -78,7 +85,7 @@ class ChatService
         // بهینه‌سازی: کاهش تعداد پیام‌های ارسالی به AI
         $messages = $this->prepareMessages($conversation['history'], $message, $level);
 
-        // استفاده از کش برای پاسخ‌های تکراری (استفاده از Cache facade به جای Redis)
+        // استفاده از کش برای پاسخ‌های تکراری
         $cacheKey = 'ai_response:' . md5(json_encode($messages));
         $aiResponse = Cache::remember($cacheKey, now()->addMinutes(5), function() use ($messages, $level) {
             return $this->callAI($messages, $level);
@@ -95,24 +102,22 @@ class ChatService
         ];
 
         $conversation['history'][] = $newEntry;
-        if (count($conversation['history']) > 10) { // کاهش از 20 به 10
+        if (count($conversation['history']) > 10) {
             $conversation['history'] = array_slice($conversation['history'], -10);
         }
 
-        // به‌روزرسانی کش با تمدید TTL (استفاده از Cache facade به جای Redis)
+        // به‌روزرسانی کش
         Cache::put(
             "conversation:{$conversationId}",
             $conversation,
-            now()->addHours(2)
+            now()->parse($conversation['expires_at'])
         );
 
-        // به‌روزرسانی پایگاه داده
-        DB::table('conversations')
-            ->where('id', $conversationId)
-            ->update([
-                'data' => json_encode($conversation),
-                'updated_at' => now()
-            ]);
+        // به‌روزرسانی دیتابیس با استفاده از مدل
+        Conversation::where('id', $conversationId)->update([
+            'history' => $conversation['history'],
+            'updated_at' => now(),
+        ]);
 
         return [
             'conversation_id' => $conversationId,
@@ -139,9 +144,7 @@ class ChatService
             $fileHash = md5_file($audioPath);
             $cacheKey = "voice_transcription:{$fileHash}";
 
-            // استفاده از Cache facade با remember برای کش کردن نتایج
             return Cache::remember($cacheKey, now()->addHour(), function() use ($audioPath) {
-                // استفاده از AI Manager بجای مستقیم API call
                 $result = AI::driver('rapidapi')->transcribe([
                     'file' => $audioPath,
                     'lang' => 'en',
@@ -155,6 +158,11 @@ class ChatService
             });
 
         } catch (\Exception $e) {
+            Log::error('Audio transcription failed', [
+                'error' => $e->getMessage(),
+                'file' => $audioPath
+            ]);
+
             return [
                 'success' => false,
                 'error' => $e->getMessage()
@@ -235,7 +243,6 @@ PROMPT;
     private function callAI(array $messages, LevelEnum $level): array
     {
         try {
-            // استفاده از AI Manager
             $response = AI::driver('rapidapi')->chat([
                 'model' => 'gpt-4o',
                 'messages' => $messages,
@@ -248,7 +255,8 @@ PROMPT;
         } catch (\Exception $e) {
             Log::error('AI API error', [
                 'error' => $e->getMessage(),
-                'level' => $level->value
+                'level' => $level->value,
+                'messages_count' => count($messages)
             ]);
 
             return [

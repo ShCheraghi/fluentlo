@@ -62,7 +62,7 @@ class ConversationController extends Controller
                         new OA\Property(
                             property: 'data',
                             properties: [
-                                new OA\Property(property: 'conversation_id', type: 'string', example: 'conv_1_1234567890'),
+                                new OA\Property(property: 'conversation_id', type: 'string', example: 'conv_1_abc123def456'),
                                 new OA\Property(property: 'message', type: 'string', example: 'Hi! I\'m your English helper. What do you want to talk about?'),
                                 new OA\Property(property: 'translation', type: 'string', example: 'سلام! من کمک‌کننده انگلیسی شما هستم. دوست داری در مورد چی صحبت کنیم؟'),
                                 new OA\Property(property: 'level', type: 'string', example: 'beginner'),
@@ -80,9 +80,17 @@ class ConversationController extends Controller
     )]
     public function start(Request $request): JsonResponse
     {
-        $request->validate([
+        $validator = Validator::make($request->all(), [
             'level' => ['required', Rule::enum(LevelEnum::class)]
         ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error',
+                'errors' => $validator->errors()
+            ], 422);
+        }
 
         try {
             $level = LevelEnum::from($request->level);
@@ -97,6 +105,11 @@ class ConversationController extends Controller
             ]);
 
         } catch (\Exception $e) {
+            Log::error('Failed to start conversation', [
+                'user_id' => $request->user()->id,
+                'error' => $e->getMessage()
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to start conversation',
@@ -122,7 +135,7 @@ class ConversationController extends Controller
                         property: 'conversation_id',
                         description: 'Conversation ID',
                         type: 'string',
-                        example: 'conv_1_1234567890'
+                        example: 'conv_1_abc123def456'
                     ),
                     new OA\Property(
                         property: 'message',
@@ -145,7 +158,7 @@ class ConversationController extends Controller
                         new OA\Property(
                             property: 'data',
                             properties: [
-                                new OA\Property(property: 'conversation_id', type: 'string', example: 'conv_1_1234567890'),
+                                new OA\Property(property: 'conversation_id', type: 'string', example: 'conv_1_abc123def456'),
                                 new OA\Property(property: 'message', type: 'string', example: 'I\'m doing great! What about you?'),
                                 new OA\Property(property: 'translation', type: 'string', example: 'من خیلی خوبم! تو چطوری؟'),
                                 new OA\Property(property: 'level', type: 'string', example: 'beginner'),
@@ -163,10 +176,18 @@ class ConversationController extends Controller
     )]
     public function message(Request $request): JsonResponse
     {
-        $request->validate([
+        $validator = Validator::make($request->all(), [
             'conversation_id' => ['required', 'string', 'min:5'],
             'message' => ['required', 'string', 'max:500']
         ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error',
+                'errors' => $validator->errors()
+            ], 422);
+        }
 
         try {
             $result = $this->chatService->sendMessage(
@@ -180,9 +201,13 @@ class ConversationController extends Controller
                 'data' => $result
             ]);
 
-        }
-        catch (\Exception $e) {
-            Log::error($e->getMessage());
+        } catch (\Exception $e) {
+            Log::error('Failed to send message', [
+                'conversation_id' => $request->conversation_id,
+                'user_id' => $request->user()->id,
+                'error' => $e->getMessage()
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to send message',
@@ -288,7 +313,7 @@ class ConversationController extends Controller
         $validator = Validator::make($request->all(), [
             'input_type' => ['required', 'in:url,file'],
             'url' => ['required_if:input_type,url', 'url', 'max:2048'],
-            'audio' => ['required_if:input_type,file', 'file', 'max:102400', 'mimes:mp3,wav,ogg,m4a,flac'],
+            'audio' => ['required_if:input_type,file', 'file', 'max:10240', 'mimes:mp3,wav,ogg,m4a,flac'], // کاهش حجم فایل به 10MB
             'lang' => ['nullable', 'string', 'max:5'],
             'task' => ['nullable', 'string', 'in:transcribe,translate'],
         ]);
@@ -349,6 +374,12 @@ class ConversationController extends Controller
             ]);
 
         } catch (\Exception $e) {
+            Log::error('Transcription failed', [
+                'input_type' => $request->input_type,
+                'user_id' => $request->user()->id,
+                'error' => $e->getMessage()
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Transcription failed',
