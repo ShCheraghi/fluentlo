@@ -8,132 +8,145 @@ use App\Services\AI\Exceptions\AIException;
 
 class ChatGpt26Driver extends BaseDriver implements AIDriverInterface
 {
-    /** @inheritDoc */
     public function transcribe(array $data): array
     {
         throw new AIException('Use rapidapi_stt driver for transcription');
     }
 
-    /**
-     * Try messages payload first; on 404/500 fall back to prompt.
-     */
     public function chat(array $data): array
     {
-        $url   = $this->buildUrl();
-        $model = $data['model'] ?? ($this->config['default_model'] ?? 'GPT-5-mini');
-        $msgs  = $data['messages'] ?? [];
+        // 1) URL دقیقاً ریشه مثل مثال RapidAPI
+        $url = rtrim((string)($this->config['base_url'] ?? ''), '/') . '/';
 
-        $allowed = ['temperature','max_tokens','top_p','stop','presence_penalty','frequency_penalty','stream'];
-        $extra   = array_intersect_key($data, array_flip($allowed));
+        // 2) مدل واقعی/همون چیزی که توی پلن RapidAPI هست
+        $model = $this->resolveModel($data['model'] ?? null);
 
-        $payloadMessages = ['model' => $model, 'messages' => $msgs] + $extra;
+        // 3) حالت strict: فقط آخرین پیام user، بدون system/history/پارامتر اضافه
+        $strict = (bool)($this->config['strict_minimal'] ?? true);
+        $messages = $strict
+            ? $this->lastUserOnly($data['messages'] ?? [])
+            : $this->sanitizeMessages($data['messages'] ?? []);
 
-        try {
-            $resp = $this->makeRequest('POST', $url, [
-                'json'    => $payloadMessages,
-                'headers' => $this->headers(),
-            ]);
-            return $this->normalize($resp);
-        } catch (AIException $e) {
-            $fallbackStatuses = (array)($this->config['fallback_statuses'] ?? [404, 500]);
-            if (!in_array($e->getCode(), $fallbackStatuses, true)) {
-                throw $e;
-            }
-            \Log::warning('Chat provider rejected messages payload; trying prompt...', [
-                'status' => $e->getCode(),
-                'msg'    => $e->getMessage(),
-            ]);
-
-            $payloadPrompt = ['model' => $model, 'prompt' => $this->messagesToPrompt($msgs)] + $extra;
-
-            $resp = $this->makeRequest('POST', $url, [
-                'json'    => $payloadPrompt,
-                'headers' => $this->headers(),
-            ]);
-
-            if (isset($resp['choices'][0]['message']['content'])) {
-                return $resp;
-            }
-            return [
-                'choices' => [[
-                    'message' => [
-                        'role'    => 'assistant',
-                        'content' => $this->extractText($resp),
-                    ],
-                ]],
-            ];
+        if (empty($messages)) {
+            $messages = [['role' => 'user', 'content' => 'Hello!']];
         }
-    }
 
+        // 4) payload دقیقاً مثل مثال RapidAPI: raw body (نه گزینه json)
+        $payload = json_encode([
+            'model'    => $model,
+            'messages' => $messages,
+        ], JSON_UNESCAPED_UNICODE);
 
-    /** هدرهای مشترک RapidAPI */
-    protected function headers(): array
-    {
-        return [
-            'x-rapidapi-key'  => $this->config['key'],
-            'x-rapidapi-host' => $this->config['host'],
-            'Content-Type'    => 'application/json',
-        ];
-    }
-
-    /** ساخت URL بر اساس base_url + endpoint (ریشه پیش‌فرض) */
-    private function buildUrl(): string
-    {
-        $base     = rtrim((string)($this->config['base_url'] ?? ''), '/');
-        $endpoint = (string)($this->config['endpoint'] ?? '/');
-        return $base . '/' . ltrim($endpoint, '/');
-    }
-
-    /** نرمال‌سازی پاسخ به فرم OpenAI-مانند */
-    private function normalize(array $resp): array
-    {
-        $text = $resp['text'] ??
-            $resp['result'] ??
-            ($resp['data']['text'] ?? null) ??
-            $resp['transcript'] ?? null;
-
-        return ['text' => (string)($text ?? '')];
-    }
-
-    /** استخراج متن از پاسخ‌های متنوع Provider */
-    private function extractText(array $resp): string
-    {
-        $candidates = [
-            $resp['content']  ?? null,
-            $resp['result']   ?? null,
-            $resp['text']     ?? null,
-            $resp['message']  ?? null,
-            $resp['response'] ?? null,
-        ];
-        foreach ($candidates as $c) {
-            if (is_string($c) && $c !== '') {
-                return $c;
-            }
+        if ($payload === false) {
+            throw new AIException('Failed to encode JSON payload');
         }
-        return 'خطا در دریافت پاسخ';
+
+        // 5) هدرها دقیقاً مینیمال
+        $resp = $this->makeRequest('POST', $url, [
+            'body'    => $payload, // ← مهم: raw body
+            'headers' => [
+                'Content-Type'    => 'application/json',
+                'x-rapidapi-key'  => $this->config['key'],
+                'x-rapidapi-host' => $this->config['host'],
+            ],
+        ]);
+
+        return $this->normalize($resp);
     }
 
-    /**
-     * تبدیل messages به یک prompt متنی ساده:
-     * - آخرین system در بالا، سپس دیالوگ user/assistant به صورت خطی.
-     */
-    private function messagesToPrompt(array $messages): string
+    private function resolveModel(?string $model): string
     {
-        $system = '';
-        $lines  = [];
+        $m   = $model ?? ($this->config['default_model'] ?? 'GPT-5-mini');
+        $map = (array)($this->config['model_map'] ?? []);
+        return $map[$m] ?? $m;
+    }
+
+    // فقط آخرین پیام user را نگه می‌داریم (سازگاری با مثال RapidAPI)
+// در ChatGpt26Driver جایگزین همین متد کن
+    private function lastUserOnly(array $messages): array
+    {
+        $instruction = null;
+        $lastUser = null;
 
         foreach ($messages as $m) {
-            $role    = (string)($m['role'] ?? 'user');
-            $content = (string)($m['content'] ?? '');
+            $role = (string)($m['role'] ?? '');
+            $content = trim((string)($m['content'] ?? ''));
 
-            if ($role === 'system') {
-                $system = $content; // آخرین system برنده است
-                continue;
+            // Instruction را پیدا کن: یا system، یا user که با "Instruction:" شروع شده
+            if ($role === 'system' && $content !== '') {
+                $instruction = "Instruction:\n" . $content;
+            } elseif ($role === 'user' && strncasecmp($content, 'Instruction:', 12) === 0) {
+                $instruction = $content;
             }
-
-            $lines[] = strtoupper($role) . ': ' . $content;
         }
 
-        return ($system !== '' ? "SYSTEM: {$system}\n" : '') . implode("\n", $lines);
+        // آخرین پیام واقعی user برای پرسش کاربر
+        foreach (array_reverse($messages) as $m) {
+            $role = (string)($m['role'] ?? '');
+            $content = trim((string)($m['content'] ?? ''));
+            if ($role === 'user' && $content !== '' && strncasecmp($content, 'Instruction:', 12) !== 0) {
+                $lastUser = $content;
+                break;
+            }
+        }
+
+        if ($lastUser === null && $instruction === null) {
+            return [];
+        }
+
+        // اگر Instruction داریم، آن را به ابتدای پیام user بچسبان
+        $merged = $instruction ? ($instruction . "\n\n" . ($lastUser ?? '')) : ($lastUser ?? '');
+
+        return [['role' => 'user', 'content' => $merged]];
+    }
+
+
+    // در غیر strict، پیام‌ها را تمیز می‌کنیم (بدون نقش‌های عجیب)
+    private function sanitizeMessages(array $messages): array
+    {
+        $allowSystem = (bool)($this->config['allow_system'] ?? false);
+        $out = [];
+        foreach ($messages as $m) {
+            $role    = (string)($m['role'] ?? '');
+            $content = trim((string)($m['content'] ?? ''));
+            if ($role === '' || $content === '') continue;
+            if (!$allowSystem && $role === 'system') {
+                $role    = 'user';
+                $content = 'System instruction: ' . $content;
+            }
+            if (!in_array($role, ['system','user','assistant'], true)) {
+                $role = 'user';
+            }
+            $out[] = ['role' => $role, 'content' => $content];
+        }
+        return $out;
+    }
+
+    private function normalize(array $resp): array
+    {
+        if (isset($resp['choices'][0]['message']['content'])) {
+            return $resp;
+        }
+        $text = $this->extractText($resp);
+        return [
+            'choices' => [[
+                'message' => ['role' => 'assistant', 'content' => $text],
+            ]],
+        ];
+    }
+
+    private function extractText(array $resp): string
+    {
+        foreach ([
+                     $resp['content']  ?? null,
+                     $resp['result']   ?? null,
+                     $resp['text']     ?? null,
+                     $resp['message']  ?? null,
+                     $resp['response'] ?? null,
+                     $resp['output']   ?? null,
+                 ] as $c) {
+            if (is_string($c) && $c !== '') return $c;
+        }
+        return '';
     }
 }

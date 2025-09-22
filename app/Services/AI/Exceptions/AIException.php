@@ -1,14 +1,16 @@
 <?php
+declare(strict_types=1);
 
 namespace App\Services\AI\Exceptions;
 
 use Exception;
+use Throwable;
 
 class AIException extends Exception
 {
-    protected $details;
+    protected array $details = [];
 
-    public function __construct(string $message = "", int $code = 0, \Throwable $previous = null, array $details = [])
+    public function __construct(string $message = "", int $code = 0, ?Throwable $previous = null, array $details = [])
     {
         parent::__construct($message, $code, $previous);
         $this->details = $details;
@@ -25,41 +27,28 @@ class AIException extends Exception
         return $this;
     }
 
-    /**
-     * برای لاگ کردن جزئیات بیشتر
-     */
     public function getContext(): array
     {
         return [
             'message' => $this->getMessage(),
-            'code' => $this->getCode(),
-            'file' => $this->getFile(),
-            'line' => $this->getLine(),
+            'code'    => $this->getCode(),
+            'file'    => $this->getFile(),
+            'line'    => $this->getLine(),
             'details' => $this->details,
-            'trace' => $this->getTraceAsString()
+            'trace'   => $this->getTraceAsString(),
         ];
     }
 
-    /**
-     * برای نمایش خطا به کاربر
-     */
     public function getUserMessage(): string
     {
-        switch ($this->getCode()) {
-            case 400:
-                return 'درخواست نامعتبر';
-            case 401:
-                return 'خطا در احراز هویت';
-            case 403:
-                return 'دسترسی غیرمجاز';
-            case 429:
-                return 'تعداد درخواست‌ها بیش از حد مجاز';
-            case 500:
-                return 'خطای سرور';
-            case 28: // timeout
-                return 'زمان انتظار تمام شد، لطفاً دوباره تلاش کنید';
-            default:
-                return 'خطا در ارتباط با سرویس هوش مصنوعی';
-        }
+        return match ($this->getCode()) {
+            400 => 'درخواست نامعتبر',
+            401 => 'خطا در احراز هویت',
+            403 => 'دسترسی غیرمجاز',
+            429 => 'تعداد درخواست‌ها بیش از حد مجاز',
+            500 => 'خطای سرور',
+            28  => 'زمان انتظار تمام شد، لطفاً دوباره تلاش کنید',
+            default => 'خطا در ارتباط با سرویس هوش مصنوعی',
+        };
     }
 }

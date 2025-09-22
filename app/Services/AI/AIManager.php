@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 
 namespace App\Services\AI;
 
@@ -14,14 +15,14 @@ class AIManager extends Manager
     protected function createRapidapiSttDriver(): \App\Services\AI\Drivers\RapidApiSTTDriver
     {
         return new \App\Services\AI\Drivers\RapidApiSTTDriver(
-            $this->config->get('ai.drivers.rapidapi_stt')
+            $this->config->get('ai.drivers.rapidapi_stt', [])
         );
     }
 
     protected function createChatgpt26Driver(): \App\Services\AI\Drivers\ChatGpt26Driver
     {
         return new \App\Services\AI\Drivers\ChatGpt26Driver(
-            $this->config->get('ai.drivers.chatgpt26')
+            $this->config->get('ai.drivers.chatgpt26', [])
         );
     }
 }

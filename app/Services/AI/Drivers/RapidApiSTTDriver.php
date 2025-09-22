@@ -1,4 +1,5 @@
 <?php
+declare(strict_types=1);
 
 namespace App\Services\AI\Drivers;
 
@@ -9,29 +10,30 @@ class RapidApiSTTDriver extends BaseDriver implements AIDriverInterface
 {
     public function transcribe(array $data): array
     {
-        $url = 'https://' . $this->config['host'] . '/transcribe';
+        $base     = rtrim((string)($this->config['base_url'] ?? ''), '/');
+        $endpoint = (string)($this->config['endpoint'] ?? '/transcribe');
+        $url      = $base . '/' . ltrim($endpoint, '/');
+
         $query = http_build_query([
-            'lang' => $data['lang'] ?? 'en',
+            'lang' => $data['lang'] ?? ($this->config['default_lang'] ?? 'en'),
             'task' => $data['task'] ?? 'transcribe',
         ]);
 
-        // multipart مشترک
         $multipart = [];
 
         if (isset($data['file'])) {
-            $path = $data['file'];
+            $path = (string)$data['file'];
             if (!is_readable($path)) {
                 throw new AIException('فایل قابل خواندن نیست');
             }
             $multipart[] = [
-                'name' => 'file',
+                'name'     => 'file',
                 'contents' => fopen($path, 'r'),
                 'filename' => basename($path),
             ];
         }
 
         if (isset($data['url'])) {
-            // اغلب سرویس‌ها همین فیلد را می‌پذیرند؛ بدون دانلود فایل
             $multipart[] = ['name' => 'url', 'contents' => (string)$data['url']];
         }
 
@@ -41,8 +43,8 @@ class RapidApiSTTDriver extends BaseDriver implements AIDriverInterface
 
         $raw = $this->makeRequest('POST', $url . '?' . $query, [
             'multipart' => $multipart,
-            'headers' => [
-                'x-rapidapi-key' => $this->config['key'],
+            'headers'   => [
+                'x-rapidapi-key'  => $this->config['key'],
                 'x-rapidapi-host' => $this->config['host'],
             ],
         ]);
@@ -52,13 +54,11 @@ class RapidApiSTTDriver extends BaseDriver implements AIDriverInterface
 
     private function normalize(array $resp): array
     {
-        $text = $resp['text']
-            ?? $resp['result']
-            ?? ($resp['data']['text'] ?? null)
-            ?? $resp['transcript']
-            ?? null;
-
-        return ['text' => (string)($text ?? '')];
+        return [
+            'text'       => (string)($resp['text'] ?? $resp['result'] ?? ($resp['data']['text'] ?? $resp['transcript'] ?? '')),
+            'confidence' => $resp['confidence'] ?? ($resp['data']['confidence'] ?? null),
+            'duration'   => $resp['duration'] ?? ($resp['data']['duration'] ?? null),
+        ];
     }
 
     public function chat(array $data): array
