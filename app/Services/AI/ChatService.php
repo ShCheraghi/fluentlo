@@ -1,9 +1,10 @@
 <?php
+
 namespace App\Services\AI;
 
 use App\Enums\LevelEnum;
 use App\Facades\AI;
-use App\Models\Conversation; // استفاده از مدل به جای DB
+use App\Models\Conversation;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -16,84 +17,91 @@ class ChatService
         $expiresAt = now()->addHours(2);
 
         $conversationData = [
-            'user_id' => $userId,
-            'level' => $level->value,
-            'history' => [],
-            'created_at' => now()->toISOString(),
-            'expires_at' => $expiresAt->toISOString()
+            'user_id'    => $userId,
+            'level'      => $level->value,
+            'history'    => [],
+            'expires_at' => $expiresAt->toISOString(),
         ];
 
-        // ذخیره در کش
-        Cache::put(
-            "conversation:{$conversationId}",
-            $conversationData,
-            $expiresAt
-        );
+        Cache::put("conversation:{$conversationId}", $conversationData, $expiresAt);
 
-        // ذخیره در دیتابیس با استفاده از مدل
         Conversation::create([
-            'id' => $conversationId,
-            'user_id' => $userId,
-            'level' => $level->value,
-            'history' => [],
+            'id'         => $conversationId,
+            'user_id'    => $userId,
+            'level'      => $level->value,
+            'history'    => [],
             'expires_at' => $expiresAt,
         ]);
 
         $greeting = $this->getGreeting($level);
+
         return [
             'conversation_id' => $conversationId,
-            'message' => $greeting['en'],
-            'translation' => $greeting['fa'],
-            'level' => $level->value,
-            'expires_at' => $conversationData['expires_at']
+            'message'         => $greeting['en'],
+            'translation'     => $greeting['fa'],
+            'level'           => $level->value,
+            'expires_at'      => $expiresAt->toISOString(), // ← NEW
         ];
+    }
+
+
+    private function getGreeting(LevelEnum $level): array
+    {
+        return match ($level) {
+            LevelEnum::BEGINNER => [
+                'en' => "Hi! What do you want to talk about?",
+                'fa' => "سلام! دوست داری در مورد چی صحبت کنیم؟"
+            ],
+            LevelEnum::INTERMEDIATE => [
+                'en' => "Hello! What topic interests you today?",
+                'fa' => "سلام! چه موضوعی امروز بهت علاقه داره؟"
+            ],
+            LevelEnum::ADVANCED => [
+                'en' => "Hello! What shall we discuss today?",
+                'fa' => "سلام! امروز چه موضوعی را بحث کنیم؟"
+            ]
+        };
+    }
+
+    public function sendVoiceMessage(string $conversationId, string $audioPath): array
+    {
+        $transcription = $this->transcribeAudio($audioPath);
+
+        if (!$transcription['success']) {
+            throw new \Exception($transcription['error']);
+        }
+
+        return $this->sendMessage($conversationId, $transcription['text']);
+    }
+
+    private function transcribeAudio(string $audioPath): array
+    {
+        try {
+            $result = AI::driver('rapidapi_stt')->transcribe([
+                'file' => $audioPath,
+                'lang' => $lang ?? config('ai.drivers.rapidapi_stt.default_lang', 'en'),
+            ]);
+
+            return [
+                'success' => true,
+                'text' => $result['text'] ?? ''
+            ];
+
+        } catch (\Exception $e) {
+            Log::error('Transcription failed', ['error' => $e->getMessage()]);
+            return ['success' => false, 'error' => $e->getMessage()];
+        }
     }
 
     public function sendMessage(string $conversationId, string $message): array
     {
-        // بازیابی از کش
-        $conversation = Cache::get("conversation:{$conversationId}");
-
-        if (!$conversation) {
-            // اگر در کش نبود، از دیتابیس بازیابی کن
-            $dbRecord = Conversation::where('id', $conversationId)
-                ->where('expires_at', '>', now())
-                ->first();
-
-            if (!$dbRecord) {
-                throw new \Exception('Conversation not found or expired');
-            }
-
-            $conversation = [
-                'user_id' => $dbRecord->user_id,
-                'level' => $dbRecord->level,
-                'history' => $dbRecord->history,
-                'created_at' => $dbRecord->created_at->toISOString(),
-                'expires_at' => $dbRecord->expires_at->toISOString()
-            ];
-
-            // دوباره در کش قرار بده
-            Cache::put(
-                "conversation:{$conversationId}",
-                $conversation,
-                $dbRecord->expires_at
-            );
-        }
-
+        $conversation = $this->getConversation($conversationId);
         $level = LevelEnum::from($conversation['level']);
 
-        // بهینه‌سازی: کاهش تعداد پیام‌های ارسالی به AI
         $messages = $this->prepareMessages($conversation['history'], $message, $level);
-
-        // استفاده از کش برای پاسخ‌های تکراری
-        $cacheKey = 'ai_response:' . md5(json_encode($messages));
-        $aiResponse = Cache::remember($cacheKey, now()->addMinutes(5), function() use ($messages, $level) {
-            return $this->callAI($messages, $level);
-        });
-
+        $aiResponse = $this->callAI($messages);
         $processed = $this->processResponse($aiResponse);
 
-        // بهینه‌سازی: محدود کردن تاریخچه
         $newEntry = [
             'user' => $message,
             'ai' => $processed['message'],
@@ -102,22 +110,12 @@ class ChatService
         ];
 
         $conversation['history'][] = $newEntry;
+
         if (count($conversation['history']) > 10) {
             $conversation['history'] = array_slice($conversation['history'], -10);
         }
 
-        // به‌روزرسانی کش
-        Cache::put(
-            "conversation:{$conversationId}",
-            $conversation,
-            now()->parse($conversation['expires_at'])
-        );
-
-        // به‌روزرسانی دیتابیس با استفاده از مدل
-        Conversation::where('id', $conversationId)->update([
-            'history' => $conversation['history'],
-            'updated_at' => now(),
-        ]);
+        $this->saveConversation($conversationId, $conversation);
 
         return [
             'conversation_id' => $conversationId,
@@ -127,146 +125,80 @@ class ChatService
         ];
     }
 
-    public function sendVoiceMessage(string $conversationId, string $audioPath): array
+    private function getConversation(string $conversationId): array
     {
-        $transcription = $this->transcribeAudio($audioPath);
+        $conversation = Cache::get("conversation:{$conversationId}");
 
-        if (!$transcription['success']) {
-            throw new \Exception('Could not transcribe audio: ' . $transcription['error']);
-        }
+        if (!$conversation) {
+            $dbRecord = Conversation::where('id', $conversationId)
+                ->where('expires_at', '>', now())
+                ->firstOrFail();
 
-        return $this->sendMessage($conversationId, $transcription['text']);
-    }
-
-    private function transcribeAudio(string $audioPath): array
-    {
-        try {
-            $fileHash = md5_file($audioPath);
-            $cacheKey = "voice_transcription:{$fileHash}";
-
-            return Cache::remember($cacheKey, now()->addHour(), function() use ($audioPath) {
-                $result = AI::driver('rapidapi')->transcribe([
-                    'file' => $audioPath,
-                    'lang' => 'en',
-                    'task' => 'transcribe'
-                ]);
-
-                return [
-                    'success' => true,
-                    'text' => $result['text'] ?? ''
-                ];
-            });
-
-        } catch (\Exception $e) {
-            Log::error('Audio transcription failed', [
-                'error' => $e->getMessage(),
-                'file' => $audioPath
-            ]);
-
-            return [
-                'success' => false,
-                'error' => $e->getMessage()
+            $conversation = [
+                'user_id' => $dbRecord->user_id,
+                'level' => $dbRecord->level,
+                'history' => $dbRecord->history,
+                'expires_at' => $dbRecord->expires_at->toISOString()
             ];
-        }
-    }
 
-    private function getGreeting(LevelEnum $level): array
-    {
-        return match($level) {
-            LevelEnum::BEGINNER => [
-                'en' => "Hi! I'm your English helper. What do you want to talk about?",
-                'fa' => "سلام! من کمک‌کننده انگلیسی شما هستم. دوست داری در مورد چی صحبت کنیم؟"
-            ],
-            LevelEnum::INTERMEDIATE => [
-                'en' => "Hello! I'm your English tutor. What topic interests you today?",
-                'fa' => "سلام! من معلم انگلیسی شما هستم. چه موضوعی امروز بهت علاقه داره؟"
-            ],
-            LevelEnum::ADVANCED => [
-                'en' => "Greetings! I'm your English conversation partner. What shall we discuss today?",
-                'fa' => "درود! من شریک مکالمه انگلیسی شما هستم. امروز چه موضوعی را بحث کنیم؟"
-            ]
-        };
+            Cache::put("conversation:{$conversationId}", $conversation, $dbRecord->expires_at);
+        }
+
+        return $conversation;
     }
 
     private function prepareMessages(array $history, string $newMessage, LevelEnum $level): array
     {
         $systemPrompt = $this->buildSystemPrompt($level);
-
         $messages = [['role' => 'system', 'content' => $systemPrompt]];
 
-        foreach (array_slice($history, -10) as $entry) {
+        // فقط 5 پیام آخر برای کاهش توکن
+        foreach (array_slice($history, -5) as $entry) {
             $messages[] = ['role' => 'user', 'content' => $entry['user']];
             $messages[] = ['role' => 'assistant', 'content' => $entry['ai']];
         }
 
         $messages[] = ['role' => 'user', 'content' => $newMessage];
-
         return $messages;
     }
 
     private function buildSystemPrompt(LevelEnum $level): string
     {
-        $levelPrompt = $level->getPrompt();
+        $levelInstructions = match ($level) {
+            LevelEnum::BEGINNER => "Use simple words and short sentences. Correct major mistakes only.",
+            LevelEnum::INTERMEDIATE => "Use everyday vocabulary. Correct grammar mistakes gently.",
+            LevelEnum::ADVANCED => "Use natural, varied language. Provide detailed corrections."
+        };
 
-        return <<<PROMPT
-You are a friendly and patient English conversation tutor helping Persian speakers improve their English.
+        return "You are an English tutor for Persian speakers.
 
-**Your Role:**
-- Engage in natural, flowing conversation
-- Help the user practice speaking English
-- Be encouraging and positive
-- Correct important mistakes gently
+{$levelInstructions}
 
-**Instructions for {$level->value} level:**
-{$levelPrompt}
+Always respond in this format:
+[Your English response]
+FA: [Complete Persian translation]
 
-**Response Format:**
-1. Always respond in natural English first
-2. Keep your response appropriate for the user's level
-3. If the user makes a significant mistake, gently correct it like this:
-   "Suggested improvement: [corrected sentence]"
-4. After your English response, always add a Persian translation in this exact format:
-   FA: [complete Persian translation of your response]
-
-**Important:**
-- Never skip the Persian translation
-- Keep the conversation engaging and natural
-- Focus on helping the user improve, not just correcting
-- Adapt your vocabulary and complexity to the user's level
-
-**Example Response:**
-That sounds interesting! Tell me more about it.
-FA: جالب به نظر می‌رسه! بیشتر بهم بگو.
-PROMPT;
+Keep responses conversational and encouraging.";
     }
 
-    private function callAI(array $messages, LevelEnum $level): array
+    private function callAI(array $messages): array
     {
         try {
-            $response = AI::driver('rapidapi')->chat([
-                'model' => 'gpt-4o',
+            return AI::driver('chatgpt26')->chat([
+                'model' => config('ai.drivers.chatgpt26.default_model'),
                 'messages' => $messages,
-                'max_tokens' => $level->getMaxTokens(),
-                'temperature' => $level->getTemperature(),
+                'temperature' => 0.7,
             ]);
-
-            return $response;
 
         } catch (\Exception $e) {
-            Log::error('AI API error', [
-                'error' => $e->getMessage(),
-                'level' => $level->value,
-                'messages_count' => count($messages)
-            ]);
+            Log::error('AI call failed', ['error' => $e->getMessage()]);
 
             return [
-                'choices' => [
-                    [
-                        'message' => [
-                            'content' => "I'm having trouble responding right now. Let's try again later.\nFA: الان مشکل در پاسخگویی دارم. لطفاً بعداً دوباره امتحان کن."
-                        ]
+                'choices' => [[
+                    'message' => [
+                        'content' => "Sorry, I'm having trouble right now. Try again!\nFA: ببخشید، الان مشکل دارم. دوباره امتحان کن!"
                     ]
-                ]
+                ]]
             ];
         }
     }
@@ -285,7 +217,18 @@ PROMPT;
 
         return [
             'message' => trim($content),
-            'translation' => 'ترجمه در دسترس نیست'
+            'translation' => 'ترجمه موجود نیست'
         ];
+    }
+
+    private function saveConversation(string $conversationId, array $conversation): void
+    {
+        Cache::put("conversation:{$conversationId}", $conversation,
+            now()->parse($conversation['expires_at']));
+
+        Conversation::where('id', $conversationId)->update([
+            'history' => $conversation['history'],
+            'updated_at' => now(),
+        ]);
     }
 }

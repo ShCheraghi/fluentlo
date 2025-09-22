@@ -1,11 +1,9 @@
 <?php
+declare(strict_types=1);
+
 namespace App\Services\AI\Contracts;
 
 interface AIServiceInterface
 {
-    /**
-     * @param string|null $driver
-     * @return AIDriverInterface
-     */
-    public function driver($driver = null);
+    public function driver(?string $driver = null): AIDriverInterface;
 }

@@ -4,30 +4,24 @@ namespace App\Services\AI;
 
 use Illuminate\Support\Manager;
 
-class AIManager extends Manager implements \App\Services\AI\Contracts\AIServiceInterface
+class AIManager extends Manager
 {
     public function getDefaultDriver(): string
     {
-        return $this->config->get('ai.default');
+        return $this->config->get('ai.default_driver', 'chatgpt26');
     }
 
-    protected function createRapidApiDriver(): \App\Services\AI\Drivers\RapidApiDriver
+    protected function createRapidapiSttDriver(): \App\Services\AI\Drivers\RapidApiSTTDriver
     {
-        return new \App\Services\AI\Drivers\RapidApiDriver(
-            $this->config->get('ai.drivers.rapidapi')
+        return new \App\Services\AI\Drivers\RapidApiSTTDriver(
+            $this->config->get('ai.drivers.rapidapi_stt')
         );
     }
 
-    protected function createOpenaiDriver(): \App\Services\AI\Drivers\OpenAiDriver
+    protected function createChatgpt26Driver(): \App\Services\AI\Drivers\ChatGpt26Driver
     {
-        return new \App\Services\AI\Drivers\OpenAiDriver(
-            $this->config->get('ai.drivers.openai')
+        return new \App\Services\AI\Drivers\ChatGpt26Driver(
+            $this->config->get('ai.drivers.chatgpt26')
         );
-    }
-
-
-    public function driver($driver = null): \App\Services\AI\Contracts\AIDriverInterface
-    {
-        return parent::driver($driver);
     }
 }

@@ -1,69 +1,62 @@
 <?php
+
 namespace App\Services\AI\Drivers;
 
-use App\Exceptions\AIException;
+use App\Services\AI\Exceptions\AIException;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\RequestException;
-use GuzzleHttp\HandlerStack;
-use GuzzleHttp\Handler\CurlMultiHandler;
 
 abstract class BaseDriver
 {
     protected array $config;
     protected Client $client;
-    protected static ?HandlerStack $sharedHandler = null;
 
-    public function __construct(array $config)
+    public function __construct(array $config = [])
     {
         $this->config = $config;
 
-        if (!self::$sharedHandler) {
-            $multi = new CurlMultiHandler(); // connection pooling
-            self::$sharedHandler = HandlerStack::create($multi);
-        }
-
         $this->client = new Client([
-            'handler'          => self::$sharedHandler,
-            'read_timeout'     => 10.0,
-            'http_errors'      => false,
-            'version'          => 2.0,
-            'headers'          => [
-                'Accept'           => 'application/json',
-                'Accept-Encoding'  => 'gzip, deflate, br',
-                'Connection'       => 'keep-alive',
+            'timeout' => $this->config['timeout'] ?? 30,
+            'connect_timeout' => 10,
+            'http_errors' => false,
+            'headers' => [
+                'Accept' => 'application/json',
+                'User-Agent' => 'FluentLo-App/1.0',
             ],
-            'decode_content'   => true,
         ]);
     }
 
     protected function makeRequest(string $method, string $url, array $options = []): array
     {
-
-        $options['timeout'] = 5.0;
-
-        if (!isset($options['headers']['Connection'])) {
-            $options['headers']['Connection'] = 'keep-alive';
-        }
         try {
+            $options['timeout'] = $options['timeout'] ?? $this->config['timeout'] ?? 30;
+            $options['headers'] = array_merge([
+                'Accept'     => 'application/json',
+                'User-Agent' => 'FluentLo-App/1.0',
+            ], $options['headers'] ?? []);
+
+
             $response = $this->client->request($method, $url, $options);
-
-
             $status = $response->getStatusCode();
-            $body   = (string) $response->getBody();
-            $json   = json_decode($body, true);
+            $body = (string)$response->getBody();
 
             if ($status >= 400) {
-                throw new AIException("Upstream error ({$status}): " . ($json['error']['message'] ?? $body), $status);
+                $json = json_decode($body, true);
+                $message = $json['error']['message'] ?? $json['message'] ?? $body;
+                throw new AIException("API Error ({$status}): {$message}", $status);
+            }
+
+            $json = json_decode($body, true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                throw new AIException("Invalid JSON response: " . json_last_error_msg());
             }
 
             return is_array($json) ? $json : ['raw' => $body];
+
         } catch (RequestException $e) {
-            if ($e->getCode() === 28) { // timeout
-                throw new AIException("API request timeout", 28);
-            }
-            throw new AIException("API request failed: " . $e->getMessage(), $e->getCode(), $e);
-        } catch (\Exception $e) {
-            throw new AIException("Unexpected error: " . $e->getMessage(), $e->getCode(), $e);
+            $status = $e->hasResponse() ? $e->getResponse()->getStatusCode() : 0;
+            $body = $e->hasResponse() ? (string)$e->getResponse()->getBody() : $e->getMessage();
+            throw new AIException("Request failed ({$status}): {$body}", $status, $e);
         }
     }
 }

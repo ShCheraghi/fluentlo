@@ -6,7 +6,6 @@ use App\Enums\LevelEnum;
 use App\Facades\AI;
 use App\Http\Controllers\Controller;
 use App\Services\AI\ChatService;
-use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -195,6 +194,7 @@ class ConversationController extends Controller
                 $request->message
             );
 
+
             return response()->json([
                 'success' => true,
                 'message' => 'Message sent successfully',
@@ -313,7 +313,7 @@ class ConversationController extends Controller
         $validator = Validator::make($request->all(), [
             'input_type' => ['required', 'in:url,file'],
             'url' => ['required_if:input_type,url', 'url', 'max:2048'],
-            'audio' => ['required_if:input_type,file', 'file', 'max:10240', 'mimes:mp3,wav,ogg,m4a,flac'], // کاهش حجم فایل به 10MB
+            'audio' => ['required_if:input_type,file', 'file', 'max:10240', 'mimes:mp3,wav,ogg,m4a,flac'],
             'lang' => ['nullable', 'string', 'max:5'],
             'task' => ['nullable', 'string', 'in:transcribe,translate'],
         ]);
@@ -322,69 +322,71 @@ class ConversationController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Validation error',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
         try {
             $t0 = microtime(true);
-            $startedAt = CarbonImmutable::createFromTimestamp((int)$t0)->toISOString();
+            $startedAt = now()->toISOString();
+            $lang = $request->input('lang', config('ai.drivers.rapidapi_stt.default_lang', 'en'));
+            $task = $request->input('task', 'transcribe');
 
             if ($request->input_type === 'url') {
-                $result = AI::driver('rapidapi')->transcribe([
+                $result = AI::driver('rapidapi_stt')->transcribe([
                     'url' => $request->url,
-                    'lang' => $request->lang ?? 'en',
-                    'task' => $request->task ?? 'transcribe',
+                    'lang' => $lang,
+                    'task' => $task,
                 ]);
             } else {
                 $file = $request->file('audio');
-
-                if (!$file->isValid()) {
+                if (!$file || !$file->isValid()) {
                     return response()->json([
                         'success' => false,
                         'message' => 'Invalid audio file'
                     ], 422);
                 }
 
-                $result = AI::driver('rapidapi')->transcribe([
-                    'file' => $file->getRealPath(),
-                    'lang' => $request->lang ?? 'en',
-                    'task' => $request->task ?? 'transcribe',
+                $result = AI::driver('rapidapi_stt')->transcribe([
+                    'file' => $file->getRealPath(), // یا $file->getPathname()
+                    'lang' => $lang,
+                    'task' => $task,
                 ]);
             }
 
-            $meta = [
-                'driver' => 'rapidapi',
-                'elapsed_ms' => (int)round((microtime(true) - $t0) * 1000),
-                'started_at' => $startedAt,
-                'finished_at' => now()->toISOString(),
-                'language' => $result['language'] ?? $request->lang ?? 'en',
-                'input_type' => $request->input_type,
-            ];
+            $elapsedMs = (int)round((microtime(true) - $t0) * 1000);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Audio transcribed successfully',
                 'data' => [
                     'text' => $result['text'] ?? '',
-                    'confidence' => $result['confidence'] ?? null,
-                    'duration' => $result['duration'] ?? null,
+                    'confidence' => $result['confidence'] ?? null, // اگر سرویس برگرداند
+                    'duration' => $result['duration'] ?? null, // اگر سرویس برگرداند
                 ],
-                'meta' => $meta
+                'meta' => [
+                    'driver' => 'rapidapi_stt',
+                    'elapsed_ms' => $elapsedMs,
+                    'started_at' => $startedAt,
+                    'finished_at' => now()->toISOString(),
+                    'language' => $lang,
+                    'input_type' => $request->input_type,
+                ],
             ]);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::error('Transcription failed', [
                 'input_type' => $request->input_type,
-                'user_id' => $request->user()->id,
-                'error' => $e->getMessage()
+                'user_id' => optional($request->user())->id,
+                'error' => $e->getMessage(),
             ]);
 
             return response()->json([
                 'success' => false,
                 'message' => 'Transcription failed',
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
+
 }
