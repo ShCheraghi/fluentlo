@@ -13,7 +13,7 @@ class OnboardingScreenResource extends JsonResource
             'title'            => $this->title,
             'subtitle'         => $this->subtitle,
             'description'      => $this->description,
-            'image_url'        => $this->image_url, // از اکسسور مدل
+            'image_url'        => $this->image_url,
             'background_color' => $this->background_color,
             'text_color'       => $this->text_color,
             'button_color'     => $this->button_color,

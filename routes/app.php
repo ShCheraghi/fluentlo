@@ -6,6 +6,8 @@ use App\Http\Controllers\API\AuthPasswordController;
 use App\Http\Controllers\API\ConversationController;
 use App\Http\Controllers\API\OnboardingController;
 use App\Http\Controllers\API\UserAssessmentController;
+use App\Http\Controllers\API\NotificationController;
+use App\Http\Controllers\Dev\BroadcastTestController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -73,7 +75,22 @@ Route::prefix('v1/app')->name('app.')->group(function () {
             ->name('message');
     });
 
+  Route::prefix('v1/app')->middleware(['auth:sanctum'])->group(function () {
+    Route::prefix('notifications')->name('notifications.')->group(function () {
+        Route::get('/', [NotificationController::class, 'index'])->name('index');
+        Route::post('{id}/read', [NotificationController::class, 'markAsRead'])->name('read');
+        Route::post('read-all', [NotificationController::class, 'markAllAsRead'])->name('read-all');
+        Route::delete('{id}', [NotificationController::class, 'destroy'])->name('destroy');
+    });
 });
+
+});
+
+if (app()->environment('local')) {
+    Route::post('/v1/dev/notifications/test', [BroadcastTestController::class, 'send'])
+        ->middleware(['auth:sanctum', 'throttle:5,1'])
+        ->name('dev.notifications.test');
+}
 
 /*
 |--------------------------------------------------------------------------
@@ -90,7 +107,7 @@ Route::prefix('v1/admin')->name('admin.')->middleware('auth:sanctum')->group(fun
         Route::delete('{onboardingScreen}', [OnboardingController::class, 'destroy'])->name('destroy');
         Route::post('{onboardingScreen}/toggle-status', [OnboardingController::class, 'toggleStatus'])
             ->name('toggle-status');
-        Route::post('reorder', [OncriptionController::class, 'reorder'])->name('reorder');
+        Route::post('reorder', [OnboardingController::class, 'reorder'])->name('reorder');
     });
 
     // -------- App Version Management (Admin) --------

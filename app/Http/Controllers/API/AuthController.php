@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\API;
 
+use App\Jobs\SendWelcomeEmail;
 use App\Models\User;
 
 use App\Services\SocialAuthService;
@@ -75,6 +76,8 @@ class AuthController extends BaseController
         ]);
 
         event(new Registered($user));
+
+        SendWelcomeEmail::dispatch($user);
 
         $token = $user->createToken('MyApp', ['*'], now()->addDays(30));
 
