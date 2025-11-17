@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>Laravel Reverb Test (Private Channel + Sanctum)</title>
+  <style>
+    body{font-family:Segoe UI,Tahoma,Arial;background:linear-gradient(135deg,#667eea,#764ba2);
+      min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+    .container{background:#fff;border-radius:20px;box-shadow:0 20px 60px rgba(0,0,0,.3);
+      max-width:700px;width:100%;padding:26px}
+    h1{color:#667eea;margin:0 0 6px}
+    .subtitle{color:#666;margin:0 0 16px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
+    .grid .full{grid-column:1/-1}
+    label{display:block;font-size:12px;color:#333;margin:0 0 6px}
+    input{width:100%;padding:10px;border:2px solid #e0e0e0;border-radius:8px}
+    .btn{width:100%;padding:12px;border:0;border-radius:8px;font-weight:600;cursor:pointer;margin-top:10px}
+    .btn-primary{background:#667eea;color:#fff}
+    .btn-danger{background:#dc3545;color:#fff}
+    .row{display:flex;gap:10px}
+    .status{padding:10px;border-radius:8px;text-align:center;font-weight:700;margin:10px 0}
+    .status-disconnected{background:#ffe5e5;color:#dc3545}
+    .status-connecting{background:#fff3cd;color:#856404}
+    .status-connected{background:#d4edda;color:#155724}
+    .list-header{display:flex;justify-content:space-between;align-items:center;margin-top:8px}
+    .clear{background:#6c757d;color:#fff;border:0;border-radius:6px;padding:6px 10px;cursor:pointer;display:none}
+    .item{background:#f8f9fa;border-left:4px solid #667eea;padding:12px;border-radius:8px;margin:10px 0}
+    .empty{color:#888;text-align:center;padding:30px}
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>🔔 Reverb Test</h1>
+  <p class="subtitle">Private channel with Bearer auth (Sanctum)</p>
+
+  <div class="grid">
+    <div>
+      <label>User ID</label>
+      <input id="userId" value="1"/>
+    </div>
+    <div>
+      <label>Sanctum Bearer Token</label>
+      <input id="token" placeholder="Paste token for the same userId"/>
+    </div>
+
+    <div>
+      <label>Reverb Host</label>
+      <input id="wsHost" value="localhost"/>
+    </div>
+    <div>
+      <label>Reverb Port</label>
+      <input id="wsPort" value="8081"/>
+    </div>
+
+    <div>
+      <label>App Key</label>
+      <input id="appKey" value="aha8uqchho7nml8ru3gk"/>
+    </div>
+    <div>
+      <label>Auth URL (broadcasting/auth)</label>
+      <input id="authUrl" value="/broadcasting/auth"/>
+    </div>
+
+    <div class="full">
+      <label>API Base (for dev ping/test, optional)</label>
+      <input id="apiBase" value="http://localhost:8080/api"/>
+    </div>
+  </div>
+
+  <div id="status" class="status status-disconnected">⚠️ Disconnected</div>
+  <div class="row">
+    <button id="connectBtn" class="btn btn-primary">Connect</button>
+    <button id="disconnectBtn" class="btn btn-danger" style="display:none;">Disconnect</button>
+  </div>
+
+  <div class="list-header">
+    <h3>📬 Notifications (<span id="count">0</span>)</h3>
+    <button id="clearBtn" class="clear">Clear All</button>
+  </div>
+  <div id="list" class="list">
+    <div class="empty">No notifications yet.</div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pusher/8.3.0/pusher.min.js"></script>
+<script>
+  // UI helpers
+  const $ = id => document.getElementById(id);
+  const ui = {
+    userId: $('userId'), token: $('token'), wsHost: $('wsHost'), wsPort: $('wsPort'),
+    appKey: $('appKey'), authUrl: $('authUrl'), apiBase: $('apiBase'),
+    status: $('status'), connectBtn: $('connectBtn'), disconnectBtn: $('disconnectBtn'),
+    list: $('list'), count: $('count'), clearBtn: $('clearBtn')
+  };
+
+  let pusher = null, channel = null, count = 0;
+
+  function setStatus(kind, text) {
+    ui.status.className = `status status-${kind}`;
+    ui.status.textContent = text;
+  }
+
+  function addItem(data) {
+    count++; ui.count.textContent = String(count); ui.clearBtn.style.display = 'inline-block';
+    const div = document.createElement('div');
+    div.className = 'item';
+    const title = data.title || 'Notification';
+    const msg = data.message || '';
+    const time = new Date(data.created_at || Date.now()).toLocaleString();
+    div.innerHTML = `<div><b>${title}</b></div><div>${msg}</div><div style="color:#888;font-size:12px">${time}</div>`;
+    if (ui.list.querySelector('.empty')) ui.list.innerHTML = '';
+    ui.list.prepend(div);
+  }
+
+  function clearAll() {
+    ui.list.innerHTML = '<div class="empty">No notifications yet.</div>';
+    count = 0; ui.count.textContent = '0'; ui.clearBtn.style.display = 'none';
+  }
+
+  function connect() {
+    const userId = ui.userId.value.trim();
+    const token = ui.token.value.trim();
+    const wsHost = ui.wsHost.value.trim();
+    const wsPort = parseInt(ui.wsPort.value.trim(), 10);
+    const appKey = ui.appKey.value.trim();
+    const authUrl = ui.authUrl.value.trim();   // e.g. "/broadcasting/auth"
+    if (!userId || !token || !wsHost || !wsPort || !appKey || !authUrl) {
+      alert('Fill all required fields.'); return;
+    }
+
+    setStatus('connecting', '🔄 Connecting...');
+    ui.connectBtn.disabled = true;
+    Pusher.logToConsole = true;
+
+    pusher = new Pusher(appKey, {
+      wsHost: wsHost,
+      wsPort: wsPort,
+      wssPort: wsPort,
+      forceTLS: false,              // set true if you have SSL + use wss
+      enabledTransports: ['ws','wss'],
+      disableStats: true,
+      cluster: 'mt1',
+      // Pusher v8: channelAuthorization sends Bearer header to your auth endpoint
+      channelAuthorization: {
+        endpoint: authUrl,          // "/broadcasting/auth" or "/api/broadcasting/auth"
+        transport: 'ajax',
+        headers: {
+    'Authorization': 'Bearer ' + token,
+    'Accept': 'application/json',
+    'X-Requested-With': 'XMLHttpRequest'
+  } 
+      }
+    });
+
+    pusher.connection.bind('state_change', s => console.log('🔄', s.previous, '->', s.current));
+    pusher.connection.bind('connected', () => {
+      setStatus('connected', '✅ Connected');
+      ui.connectBtn.style.display = 'none';
+      ui.disconnectBtn.style.display = 'inline-block';
+      console.log('Socket ID:', pusher.connection.socket_id);
+    });
+    pusher.connection.bind('error', err => {
+      console.error('❌ Pusher error', err);
+      setStatus('disconnected', '❌ Connection Error');
+      ui.connectBtn.disabled = false;
+    });
+
+    const channelName = `private-user.${userId}`;
+    console.log('📡 Subscribing:', channelName);
+    channel = pusher.subscribe(channelName);
+
+    channel.bind('pusher:subscription_succeeded', () => {
+      console.log('✅ Subscribed:', channelName);
+    });
+    channel.bind('pusher:subscription_error', err => {
+      console.error('❌ Subscription error', err);
+      setStatus('disconnected', '❌ Subscription Failed');
+      ui.connectBtn.disabled = false;
+    });
+
+    // Your app event name
+    channel.bind('notification.new', data => {
+      console.log('🔔 notification.new', data);
+      addItem(data);
+      if ('Notification' in window && Notification.permission === 'granted') {
+        try { new Notification(data.title || 'Notification', { body: data.message || '' }); } catch (_) {}
+      }
+    });
+
+    // Debug all events
+    channel.bind_global((evt, data) => console.log('📨', evt, data));
+  }
+
+  function disconnect() {
+    if (pusher) { pusher.disconnect(); pusher = null; channel = null; }
+    setStatus('disconnected', '⚠️ Disconnected');
+    ui.connectBtn.style.display = 'inline-block';
+    ui.connectBtn.disabled = false;
+    ui.disconnectBtn.style.display = 'none';
+  }
+
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+
+  ui.connectBtn.addEventListener('click', connect);
+  ui.disconnectBtn.addEventListener('click', disconnect);
+  ui.clearBtn.addEventListener('click', clearAll);
+</script>
+</body>
+</html>

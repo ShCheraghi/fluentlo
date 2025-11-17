@@ -19,6 +19,11 @@ return new class extends Migration
             $table->string('password')->nullable();
             $table->string('avatar')->nullable();
             $table->string('locale', 5)->default('en');
+
+            $table->enum('status', ['active', 'inactive', 'suspended'])->default('active');
+            $table->integer('total_points')->default(0);
+            $table->dateTime('last_login_at')->nullable();
+
             $table->rememberToken();
             $table->timestamps();
         });

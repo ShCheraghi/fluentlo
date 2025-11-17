@@ -90,7 +90,6 @@ class OnboardingController extends BaseController
         operationId: 'adminStoreOnboardingScreen',
         summary: 'Create new onboarding screen (Admin)',
         security: [['sanctum' => []]],
-        tags: ['Onboarding'],
         requestBody: new OA\RequestBody(
             required: true,
             content: new OA\MediaType(
@@ -112,6 +111,7 @@ class OnboardingController extends BaseController
                 )
             )
         ),
+        tags: ['Onboarding'],
         responses: [
             new OA\Response(response: 201, description: 'Onboarding screen created successfully'),
             new OA\Response(response: 422, description: 'Validation error'),

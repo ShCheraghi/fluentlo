@@ -8,47 +8,57 @@ use Symfony\Component\HttpFoundation\Response;
 
 class BaseController extends Controller
 {
-    public function sendResponse(
+    /**
+     * Standard response structure for success.
+     */
+    protected function sendResponse(
         mixed  $data = null,
         string $messageKey = 'success.general',
         int    $status = Response::HTTP_OK
     ): JsonResponse
     {
-        $response = [
-            'success' => true,
-            'message' => __($messageKey),
-            'data' => $data,
-        ];
-
-        return response()->json($response, $status)
-            ->header('Content-Type', 'application/json');
+        return $this->sendJsonResponse(true, $messageKey, $data, $status);
     }
 
-    public function sendError(
+    /**
+     * Standard response structure for errors.
+     */
+    protected function sendError(
         string $messageKey,
         array  $data = [],
         int    $status = Response::HTTP_BAD_REQUEST
     ): JsonResponse
     {
-        $response = [
-            'success' => false,
-            'message' => __($messageKey, $data),
-            'data' => null,
-        ];
-
-        return response()->json($response, $status)
-            ->header('Content-Type', 'application/json');
+        return $this->sendJsonResponse(false, $messageKey, null, $status, $data);
     }
 
-    public function sendValidationError(array $errors): JsonResponse
+    /**
+     * Standard response structure for validation errors.
+     */
+    protected function sendValidationError(array $errors): JsonResponse
     {
-        $response = [
-            'success' => false,
-            'message' => __('validation.failed'),
-            'errors' => $errors,
-        ];
+        return $this->sendJsonResponse(false, __('validation.failed'), null, Response::HTTP_UNPROCESSABLE_ENTITY, $errors);
+    }
 
-        return response()->json($response, Response::HTTP_UNPROCESSABLE_ENTITY)
+    /**
+     * Helper method to send JSON responses.
+     */
+    private function sendJsonResponse(
+        bool   $success,
+        string $messageKey,
+        mixed  $data = null,
+        int    $status = Response::HTTP_OK,
+        array  $extraData = []
+    ): JsonResponse
+    {
+        $response = array_merge([
+            'success' => $success,
+            'message' => __($messageKey),
+            'data' => $data,
+            'timestamp' => now()->toDateTimeString(),
+        ], $extraData);
+
+        return response()->json($response, $status)
             ->header('Content-Type', 'application/json');
     }
 }

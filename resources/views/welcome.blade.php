@@ -159,7 +159,7 @@
         </a>
 
         <!-- Reverb Test -->
-        <a href="http://localhost:8080/reverb.php" target="_blank" class="card bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl overflow-hidden">
+        <a href="http://localhost:8080/reverb.html" target="_blank" class="card bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl overflow-hidden">
             <div class="p-6 flex flex-col items-center text-center">
                 <div class="icon-container bg-purple-100 p-5 rounded-2xl mb-5">
                     <i class="fas fa-broadcast-tower text-purple-600 text-4xl"></i>
